@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
+import { PROTOCOL_VERSION, type MessageEnvelope } from '@riv/contracts';
 import type { AgentRuntime } from '@riv/agent';
 
 import { AgentRuntimeError } from '@riv/agent';
@@ -19,19 +20,40 @@ const CreateMemoryBodySchema = z.object({
   content: z.string().min(1)
 });
 
-function sseResponse(stream: Iterable<unknown>) {
+function createStreamErrorEnvelope(error: unknown): MessageEnvelope {
+  return {
+    version: PROTOCOL_VERSION,
+    type: 'assistant_stream',
+    emittedAt: new Date().toISOString(),
+    payload: {
+      type: 'error',
+      message:
+        error instanceof Error ? error.message : 'Riv hit an unexpected error.'
+    }
+  };
+}
+
+function sseResponse(stream: AsyncIterable<unknown>) {
   const encoder = new TextEncoder();
 
   return new Response(
     new ReadableStream({
       async start(controller) {
-        for await (const item of stream) {
+        try {
+          for await (const item of stream) {
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify(item)}\n\n`)
+            );
+          }
+        } catch (error) {
           controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify(item)}\n\n`)
+            encoder.encode(
+              `data: ${JSON.stringify(createStreamErrorEnvelope(error))}\n\n`
+            )
           );
+        } finally {
+          controller.close();
         }
-
-        controller.close();
       }
     }),
     {
@@ -56,7 +78,15 @@ function createJsonError(error: unknown) {
     );
   }
 
-  throw error;
+  return Response.json(
+    {
+      error:
+        error instanceof Error ? error.message : 'Riv hit an unexpected error.'
+    },
+    {
+      status: 500
+    }
+  );
 }
 
 export function createApp(options: {
@@ -66,6 +96,8 @@ export function createApp(options: {
 }) {
   const app = new Hono();
   const authService = options.authService ?? createAuthService();
+
+  app.onError((error) => createJsonError(error));
 
   app.post('/threads', async (context) => {
     const viewer = await authService.resolveViewer(context);
@@ -101,52 +133,54 @@ export function createApp(options: {
     try {
       const viewer = await authService.resolveViewer(context);
       const body = CreateMessageBodySchema.parse(await context.req.json());
-      const events = [];
+      return sseResponse(
+        options.runtime.runAssistantTurn({
+          threadId: context.req.param('threadId'),
+          userId: viewer.id,
+          content: body.content,
+          attachments: body.attachments
+        })
+      );
+    } catch (error) {
+      return createJsonError(error);
+    }
+  });
 
-      for await (const event of options.runtime.runAssistantTurn({
-        threadId: context.req.param('threadId'),
-        userId: viewer.id,
-        content: body.content,
-        attachments: body.attachments
-      })) {
-        events.push(event);
+  app.post(
+    '/threads/:threadId/action-proposals/:proposalId/confirm',
+    async (context) => {
+      try {
+        const viewer = await authService.resolveViewer(context);
+        const resolution = await options.runtime.confirmActionProposal({
+          actorUserId: viewer.id,
+          proposalId: context.req.param('proposalId'),
+          threadId: context.req.param('threadId')
+        });
+
+        return context.json(resolution);
+      } catch (error) {
+        return createJsonError(error);
       }
-
-      return sseResponse(events);
-    } catch (error) {
-      return createJsonError(error);
     }
-  });
+  );
 
-  app.post('/threads/:threadId/action-proposals/:proposalId/confirm', async (context) => {
-    try {
-      const viewer = await authService.resolveViewer(context);
-      const resolution = await options.runtime.confirmActionProposal({
-        actorUserId: viewer.id,
-        proposalId: context.req.param('proposalId'),
-        threadId: context.req.param('threadId')
-      });
+  app.post(
+    '/threads/:threadId/action-proposals/:proposalId/reject',
+    async (context) => {
+      try {
+        const viewer = await authService.resolveViewer(context);
+        const resolution = await options.runtime.rejectActionProposal({
+          actorUserId: viewer.id,
+          proposalId: context.req.param('proposalId'),
+          threadId: context.req.param('threadId')
+        });
 
-      return context.json(resolution);
-    } catch (error) {
-      return createJsonError(error);
+        return context.json(resolution);
+      } catch (error) {
+        return createJsonError(error);
+      }
     }
-  });
-
-  app.post('/threads/:threadId/action-proposals/:proposalId/reject', async (context) => {
-    try {
-      const viewer = await authService.resolveViewer(context);
-      const resolution = await options.runtime.rejectActionProposal({
-        actorUserId: viewer.id,
-        proposalId: context.req.param('proposalId'),
-        threadId: context.req.param('threadId')
-      });
-
-      return context.json(resolution);
-    } catch (error) {
-      return createJsonError(error);
-    }
-  });
+  );
 
   app.get('/me/memories', async (context) => {
     const viewer = await authService.resolveViewer(context);

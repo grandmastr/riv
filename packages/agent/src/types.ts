@@ -79,6 +79,18 @@ export type ModelGatewayTurnResult = {
   proposals: ActionProposalDraft[];
 };
 
+export type ModelGatewayStreamEvent =
+  | {
+      type: 'message_delta';
+      delta: string;
+    }
+  | {
+      type: 'proposal';
+      proposal: ActionProposalDraft;
+    };
+
 export interface ModelGateway {
-  generateTurn(input: ModelGatewayTurnInput): Promise<ModelGatewayTurnResult>;
+  streamTurn(
+    input: ModelGatewayTurnInput
+  ): AsyncGenerator<ModelGatewayStreamEvent>;
 }

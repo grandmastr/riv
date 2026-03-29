@@ -81,7 +81,10 @@ describe('contracts', () => {
     });
 
     expect(attachment.kind).toBe('tabs');
-    expect(attachment.tabs[0]?.tabId).toBe(3);
+
+    if (attachment.kind === 'tabs') {
+      expect(attachment.tabs[0]?.tabId).toBe(3);
+    }
   });
 
   it('parses action proposals and rejects missing confirmation requirements', () => {
@@ -164,6 +167,8 @@ describe('contracts', () => {
     });
 
     expect(envelope.payload.type).toBe('proposal_created');
-    expect(() => AssistantStreamEventSchema.parse({ type: 'unknown' })).toThrow();
+    expect(() =>
+      AssistantStreamEventSchema.parse({ type: 'unknown' })
+    ).toThrow();
   });
 });

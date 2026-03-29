@@ -216,7 +216,9 @@ export type ContentBlock = z.infer<typeof ContentBlockSchema>;
 export type PageContextSnapshot = z.infer<typeof PageContextSnapshotSchema>;
 export type SelectedTextContext = z.infer<typeof SelectedTextContextSchema>;
 export type BrowserTabSummary = z.infer<typeof BrowserTabSummarySchema>;
-export type BrowserTabGroupSummary = z.infer<typeof BrowserTabGroupSummarySchema>;
+export type BrowserTabGroupSummary = z.infer<
+  typeof BrowserTabGroupSummarySchema
+>;
 export type ConversationThread = z.infer<typeof ConversationThreadSchema>;
 export type ConversationMessage = z.infer<typeof ConversationMessageSchema>;
 export type ContextAttachment = z.infer<typeof ContextAttachmentSchema>;

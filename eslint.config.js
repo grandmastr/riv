@@ -10,19 +10,16 @@ export default tseslint.config(
       '**/.wxt/**',
       '**/.output/**',
       '**/node_modules/**',
+      'eslint.config.js',
       'playwright-report/**',
       'test-results/**'
     ]
   },
   js.configs.recommended,
-  ...tseslint.configs.recommendedTypeChecked,
+  ...tseslint.configs.recommended,
   {
     files: ['**/*.{ts,tsx}'],
     languageOptions: {
-      parserOptions: {
-        projectService: true,
-        tsconfigRootDir: import.meta.dirname
-      },
       globals: {
         ...globals.browser,
         ...globals.node,

@@ -1,7 +1,12 @@
-import { MockModelGateway, OpenAIModelGateway, createAgentRuntime } from '@riv/agent';
+import {
+  MockModelGateway,
+  OpenAIModelGateway,
+  createAgentRuntime
+} from '@riv/agent';
 import { serve } from '@hono/node-server';
 
 import { createApp } from './app';
+import { createPersistenceLayer } from './db/persistence';
 
 function createDefaultModelGateway() {
   if (process.env.OPENAI_API_KEY) {
@@ -11,13 +16,19 @@ function createDefaultModelGateway() {
   }
 
   return new MockModelGateway({
-    assistantMessage: 'Riv backend is running with the deterministic mock gateway.',
+    assistantMessage:
+      'Riv backend is running with the deterministic mock gateway.',
     proposals: []
   });
 }
 
+const persistence = createPersistenceLayer({
+  databaseUrl: process.env.DATABASE_DIRECT_URL ?? process.env.DATABASE_URL
+});
+
 const runtime = createAgentRuntime({
-  modelGateway: createDefaultModelGateway()
+  modelGateway: createDefaultModelGateway(),
+  repositories: persistence.repositories
 });
 
 const { app } = createApp({
@@ -30,6 +41,8 @@ serve(
     port: Number(process.env.PORT ?? 3000)
   },
   (info) => {
-    console.log(`Riv API listening on http://localhost:${info.port}`);
+    console.log(
+      `Riv API listening on http://localhost:${info.port} using ${persistence.kind} persistence.`
+    );
   }
 );

@@ -207,9 +207,8 @@ describe('createBackgroundBridge', () => {
 
     const tabs = await bridge.listTabs();
 
-    expect(tabs.map((tab) => BrowserTabSummarySchema.parse(tab).tabId)).toEqual([
-      11,
-      12
-    ]);
+    expect(tabs.map((tab) => BrowserTabSummarySchema.parse(tab).tabId)).toEqual(
+      [11, 12]
+    );
   });
 });

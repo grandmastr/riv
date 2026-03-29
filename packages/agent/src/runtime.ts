@@ -63,7 +63,10 @@ function defaultIdGenerator(prefix: string) {
   return `${prefix}_${crypto.randomUUID()}`;
 }
 
-function createEnvelope(payload: MessageEnvelope['payload'], emittedAt: string): MessageEnvelope {
+function createEnvelope(
+  payload: MessageEnvelope['payload'],
+  emittedAt: string
+): MessageEnvelope {
   return {
     version: PROTOCOL_VERSION,
     type: 'assistant_stream',
@@ -98,7 +101,10 @@ async function assertOwnedThread(
   }
 
   if (thread.userId !== userId) {
-    throw new AgentRuntimeError('Thread access is not allowed for this viewer.', 403);
+    throw new AgentRuntimeError(
+      'Thread access is not allowed for this viewer.',
+      403
+    );
   }
 
   return thread;
@@ -117,11 +123,14 @@ export class AgentRuntime {
     this.now = options.now ?? (() => new Date().toISOString());
     this.idGenerator = options.idGenerator ?? defaultIdGenerator;
     this.modelGateway = options.modelGateway;
-    this.threads = options.repositories?.threads ?? new InMemoryThreadRepository();
-    this.messages = options.repositories?.messages ?? new InMemoryMessageRepository();
+    this.threads =
+      options.repositories?.threads ?? new InMemoryThreadRepository();
+    this.messages =
+      options.repositories?.messages ?? new InMemoryMessageRepository();
     this.proposals =
       options.repositories?.proposals ?? new InMemoryActionProposalRepository();
-    this.memories = options.repositories?.memories ?? new InMemoryMemoryRepository();
+    this.memories =
+      options.repositories?.memories ?? new InMemoryMemoryRepository();
   }
 
   async createThread(input: CreateThreadInput) {
@@ -138,8 +147,14 @@ export class AgentRuntime {
     return thread;
   }
 
-  async getThreadDetail(input: ViewerScopedInput & { threadId: string }): Promise<ThreadDetail> {
-    const thread = await assertOwnedThread(this.threads, input.threadId, input.userId);
+  async getThreadDetail(
+    input: ViewerScopedInput & { threadId: string }
+  ): Promise<ThreadDetail> {
+    const thread = await assertOwnedThread(
+      this.threads,
+      input.threadId,
+      input.userId
+    );
     const messages = await this.messages.listByThreadId(thread.id);
     const actionProposals = await this.proposals.listByThreadId(thread.id);
 
@@ -150,8 +165,14 @@ export class AgentRuntime {
     };
   }
 
-  async *runAssistantTurn(input: RunAssistantTurnInput): AsyncGenerator<MessageEnvelope> {
-    const thread = await assertOwnedThread(this.threads, input.threadId, input.userId);
+  async *runAssistantTurn(
+    input: RunAssistantTurnInput
+  ): AsyncGenerator<MessageEnvelope> {
+    const thread = await assertOwnedThread(
+      this.threads,
+      input.threadId,
+      input.userId
+    );
     const timestamp = this.now();
     const userMessage: ConversationMessage = {
       id: this.idGenerator('message_user'),
@@ -167,47 +188,39 @@ export class AgentRuntime {
 
     const priorMessages = await this.messages.listByThreadId(thread.id);
     const memories = await this.memories.listByUserId(input.userId);
-    const result = await this.modelGateway.generateTurn({
+    let assistantResponse = '';
+
+    for await (const event of this.modelGateway.streamTurn({
       thread,
       messages: priorMessages,
       userMessage,
       transientAttachments: input.attachments,
       memories
-    });
+    })) {
+      if (event.type === 'message_delta') {
+        assistantResponse += event.delta;
 
-    if (result.assistantMessage.trim()) {
-      const assistantMessage: ConversationMessage = {
-        id: this.idGenerator('message_assistant'),
-        threadId: thread.id,
-        role: 'assistant',
-        content: result.assistantMessage,
-        attachments: [],
-        toolInvocations: [],
-        createdAt: timestamp
-      };
+        yield createEnvelope(
+          {
+            type: 'message_delta',
+            delta: event.delta
+          },
+          this.now()
+        );
+        continue;
+      }
 
-      await this.messages.append(assistantMessage);
-
-      yield createEnvelope(
-        {
-          type: 'message_delta',
-          delta: result.assistantMessage
-        },
-        timestamp
-      );
-    }
-
-    for (const draft of result.proposals) {
+      const proposalTimestamp = this.now();
       const proposal: StoredActionProposal = {
         id: this.idGenerator('proposal'),
         threadId: thread.id,
-        kind: draft.kind,
-        reason: draft.reason,
-        preview: draft.preview,
-        riskLevel: draft.riskLevel,
+        kind: event.proposal.kind,
+        reason: event.proposal.reason,
+        preview: event.proposal.preview,
+        riskLevel: event.proposal.riskLevel,
         requiresConfirmation: true,
-        payload: draft.payload,
-        createdAt: timestamp,
+        payload: event.proposal.payload,
+        createdAt: proposalTimestamp,
         status: 'pending'
       };
 
@@ -218,17 +231,40 @@ export class AgentRuntime {
           type: 'proposal_created',
           proposal
         },
-        timestamp
+        proposalTimestamp
       );
+    }
+
+    if (assistantResponse.trim()) {
+      const assistantMessage: ConversationMessage = {
+        id: this.idGenerator('message_assistant'),
+        threadId: thread.id,
+        role: 'assistant',
+        content: assistantResponse,
+        attachments: [],
+        toolInvocations: [],
+        createdAt: timestamp
+      };
+
+      await this.messages.append(assistantMessage);
     }
   }
 
-  async confirmActionProposal(input: ResolveProposalInput): Promise<ProposalResolution> {
-    const thread = await assertOwnedThread(this.threads, input.threadId, input.actorUserId);
+  async confirmActionProposal(
+    input: ResolveProposalInput
+  ): Promise<ProposalResolution> {
+    const thread = await assertOwnedThread(
+      this.threads,
+      input.threadId,
+      input.actorUserId
+    );
     const proposal = await this.proposals.findById(thread.id, input.proposalId);
 
     if (!proposal) {
-      throw new AgentRuntimeError(`Proposal ${input.proposalId} was not found.`, 404);
+      throw new AgentRuntimeError(
+        `Proposal ${input.proposalId} was not found.`,
+        404
+      );
     }
 
     const timestamp = this.now();
@@ -264,12 +300,21 @@ export class AgentRuntime {
     };
   }
 
-  async rejectActionProposal(input: ResolveProposalInput): Promise<ProposalResolution> {
-    const thread = await assertOwnedThread(this.threads, input.threadId, input.actorUserId);
+  async rejectActionProposal(
+    input: ResolveProposalInput
+  ): Promise<ProposalResolution> {
+    const thread = await assertOwnedThread(
+      this.threads,
+      input.threadId,
+      input.actorUserId
+    );
     const proposal = await this.proposals.findById(thread.id, input.proposalId);
 
     if (!proposal) {
-      throw new AgentRuntimeError(`Proposal ${input.proposalId} was not found.`, 404);
+      throw new AgentRuntimeError(
+        `Proposal ${input.proposalId} was not found.`,
+        404
+      );
     }
 
     const timestamp = this.now();
