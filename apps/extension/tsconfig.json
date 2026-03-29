@@ -1,8 +1,13 @@
 {
-  "extends": "../../tsconfig.base.json",
+  "extends": "./.wxt/tsconfig.json",
   "compilerOptions": {
+    "allowImportingTsExtensions": true,
     "jsx": "react-jsx",
+    "baseUrl": ".",
+    "paths": {
+      "@riv/contracts": ["../../packages/contracts/src/index.ts"],
+      "@riv/agent": ["../../packages/agent/src/index.ts"]
+    },
     "types": ["node", "chrome-types"]
-  },
-  "include": ["entrypoints/**/*.ts", "entrypoints/**/*.tsx", "src/**/*.ts", "src/**/*.tsx", "wxt.config.ts", "vitest.config.ts"]
+  }
 }

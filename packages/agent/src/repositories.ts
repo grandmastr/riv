@@ -1,7 +1,4 @@
-import type {
-  ConversationMessage,
-  ConversationThread
-} from '@riv/contracts';
+import type { ConversationMessage, ConversationThread } from '@riv/contracts';
 
 import type { MemoryRecord, StoredActionProposal } from './types';
 
@@ -17,7 +14,10 @@ export interface MessageRepository {
 
 export interface ActionProposalRepository {
   create(proposal: StoredActionProposal): Promise<void>;
-  findById(threadId: string, proposalId: string): Promise<StoredActionProposal | null>;
+  findById(
+    threadId: string,
+    proposalId: string
+  ): Promise<StoredActionProposal | null>;
   listByThreadId(threadId: string): Promise<StoredActionProposal[]>;
   update(proposal: StoredActionProposal): Promise<void>;
 }

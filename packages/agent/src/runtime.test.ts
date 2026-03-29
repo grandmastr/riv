@@ -32,6 +32,63 @@ const pageAttachment: ContextAttachment = {
 };
 
 describe('agent runtime', () => {
+  it('streams assistant text incrementally and stores the combined response', async () => {
+    const runtime = createAgentRuntime({
+      now: () => NOW,
+      idGenerator: createSequenceIdGenerator([
+        'thread_stream',
+        'message_user_stream',
+        'message_assistant_stream'
+      ]),
+      modelGateway: {
+        async *streamTurn() {
+          yield {
+            type: 'message_delta',
+            delta: '## Summary\n\n'
+          };
+          yield {
+            type: 'message_delta',
+            delta: '- First point\n- Second point'
+          };
+        }
+      } as never
+    });
+
+    const thread = await runtime.createThread({
+      title: 'Streaming',
+      userId: 'user_dev'
+    });
+
+    const envelopes = [];
+    for await (const envelope of runtime.runAssistantTurn({
+      threadId: thread.id,
+      userId: 'user_dev',
+      content: 'Summarize this page.',
+      attachments: [pageAttachment]
+    })) {
+      envelopes.push(MessageEnvelopeSchema.parse(envelope));
+    }
+
+    expect(
+      envelopes
+        .filter((envelope) => envelope.payload.type === 'message_delta')
+        .map((envelope) =>
+          envelope.payload.type === 'message_delta'
+            ? envelope.payload.delta
+            : null
+        )
+    ).toEqual(['## Summary\n\n', '- First point\n- Second point']);
+
+    const detail = await runtime.getThreadDetail({
+      threadId: thread.id,
+      userId: 'user_dev'
+    });
+
+    expect(detail.messages[1]?.content).toBe(
+      '## Summary\n\n- First point\n- Second point'
+    );
+  });
+
   it('runs a turn with transient page context and stores the durable conversation state', async () => {
     const runtime = createAgentRuntime({
       now: () => NOW,
@@ -46,7 +103,8 @@ describe('agent runtime', () => {
         proposals: [
           {
             kind: 'groupTabs',
-            reason: 'The documentation tabs are all part of the same research task.',
+            reason:
+              'The documentation tabs are all part of the same research task.',
             preview: {
               title: 'Group Riv research tabs',
               summary: 'Create one tab group for the Riv API docs.',
@@ -88,10 +146,14 @@ describe('agent runtime', () => {
     });
 
     expect(detail.messages).toHaveLength(2);
-    expect(detail.messages[0]?.content).toBe('Please organize these docs tabs.');
+    expect(detail.messages[0]?.content).toBe(
+      'Please organize these docs tabs.'
+    );
     expect(detail.messages[0]?.attachments).toEqual([]);
     expect(detail.messages[1]?.role).toBe('assistant');
-    expect(detail.messages[1]?.content).toBe('I can group those Riv tabs for you.');
+    expect(detail.messages[1]?.content).toBe(
+      'I can group those Riv tabs for you.'
+    );
     expect(detail.actionProposals).toHaveLength(1);
     expect(detail.actionProposals[0]?.status).toBe('pending');
     expect(await runtime.listMemories({ userId: 'user_dev' })).toEqual([]);
@@ -135,13 +197,13 @@ describe('agent runtime', () => {
       userId: 'user_dev'
     });
 
-    for await (const _ of runtime.runAssistantTurn({
+    for await (const envelope of runtime.runAssistantTurn({
       threadId: confirmThread.id,
       userId: 'user_dev',
       content: 'Handle the duplicate tabs.',
       attachments: []
     })) {
-      // consume stream
+      expect(envelope).toBeDefined();
     }
 
     const confirmation = await runtime.confirmActionProposal({
@@ -152,20 +214,22 @@ describe('agent runtime', () => {
 
     expect(confirmation.confirmation.decision).toBe('confirm');
     expect(confirmation.result.status).toBe('executed');
-    expect(confirmation.result.affectedTabs.map((tab) => tab.tabId)).toEqual([7, 8]);
+    expect(confirmation.result.affectedTabs.map((tab) => tab.tabId)).toEqual([
+      7, 8
+    ]);
 
     const rejectThread = await runtime.createThread({
       title: 'Reject flow',
       userId: 'user_dev'
     });
 
-    for await (const _ of runtime.runAssistantTurn({
+    for await (const envelope of runtime.runAssistantTurn({
       threadId: rejectThread.id,
       userId: 'user_dev',
       content: 'Maybe close the duplicate tabs.',
       attachments: []
     })) {
-      // consume stream
+      expect(envelope).toBeDefined();
     }
 
     const rejection = await runtime.rejectActionProposal({

@@ -95,6 +95,98 @@ async function readStream(response: Response) {
 }
 
 describe('api app', () => {
+  it('starts the SSE response before the full assistant turn finishes', async () => {
+    let releaseSecondDelta: (() => void) | undefined;
+    const secondDeltaGate = new Promise<void>((resolve) => {
+      releaseSecondDelta = resolve;
+    });
+
+    const { app } = createApp({
+      runtime: {
+        async *runAssistantTurn() {
+          yield {
+            version: '2026-03-29',
+            type: 'assistant_stream',
+            emittedAt: NOW,
+            payload: {
+              type: 'message_delta',
+              delta: '## Summary\n\n'
+            }
+          };
+
+          await secondDeltaGate;
+
+          yield {
+            version: '2026-03-29',
+            type: 'assistant_stream',
+            emittedAt: NOW,
+            payload: {
+              type: 'message_delta',
+              delta: '- First point\n- Second point'
+            }
+          };
+        }
+      } as never
+    });
+
+    const responsePromise = app.request('/threads/thread_1/messages', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        content: 'Summarize this page.',
+        attachments: []
+      })
+    });
+
+    const outcome = await Promise.race([
+      responsePromise.then(() => 'response'),
+      new Promise<'timeout'>((resolve) => {
+        setTimeout(() => resolve('timeout'), 40);
+      })
+    ]);
+
+    expect(outcome).toBe('response');
+
+    const response = await responsePromise;
+    const reader = response.body?.getReader();
+
+    expect(reader).toBeDefined();
+
+    const firstChunk = await reader?.read();
+    const decoded = new TextDecoder().decode(firstChunk?.value);
+    expect(decoded).toContain('"type":"message_delta"');
+    expect(decoded).toContain('## Summary');
+
+    releaseSecondDelta?.();
+  });
+
+  it('returns a structured error when thread creation fails unexpectedly', async () => {
+    const { app } = createApp({
+      runtime: {
+        async createThread() {
+          throw new Error('password authentication failed for user "postgres"');
+        }
+      } as never
+    });
+
+    const response = await app.request('/threads', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        title: 'Riv planning'
+      })
+    });
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({
+      error: 'password authentication failed for user "postgres"'
+    });
+  });
+
   it('creates and fetches threads for the deterministic dev viewer', async () => {
     const { app } = await createTestApp();
 
@@ -160,7 +252,9 @@ describe('api app', () => {
     };
 
     expect(detail.messages).toHaveLength(2);
-    expect(detail.messages[0]?.content).toBe('Please organize what I am looking at.');
+    expect(detail.messages[0]?.content).toBe(
+      'Please organize what I am looking at.'
+    );
     expect(detail.messages[0]?.attachments).toEqual([]);
     expect(detail.actionProposals[0]?.id).toBe('proposal_1');
     expect(detail.actionProposals[0]?.status).toBe('pending');
@@ -170,16 +264,20 @@ describe('api app', () => {
     const { app } = await createTestApp();
     const threadId = await createThread(app);
 
-    await app.request(`/threads/${threadId}/messages`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json'
-      },
-      body: JSON.stringify({
-        content: 'Organize these tabs.',
-        attachments: []
-      })
-    });
+    const firstTurnResponse = await app.request(
+      `/threads/${threadId}/messages`,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          content: 'Organize these tabs.',
+          attachments: []
+        })
+      }
+    );
+    await readStream(firstTurnResponse);
 
     const confirmResponse = await app.request(
       `/threads/${threadId}/action-proposals/proposal_1/confirm`,
@@ -197,16 +295,20 @@ describe('api app', () => {
     expect(confirmed.result.status).toBe('executed');
 
     const secondThreadId = await createThread(app);
-    await app.request(`/threads/${secondThreadId}/messages`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json'
-      },
-      body: JSON.stringify({
-        content: 'Organize these tabs too.',
-        attachments: []
-      })
-    });
+    const secondTurnResponse = await app.request(
+      `/threads/${secondThreadId}/messages`,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          content: 'Organize these tabs too.',
+          attachments: []
+        })
+      }
+    );
+    await readStream(secondTurnResponse);
 
     const rejectResponse = await app.request(
       `/threads/${secondThreadId}/action-proposals/proposal_2/reject`,
