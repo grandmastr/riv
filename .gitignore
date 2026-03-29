@@ -1,0 +1,15 @@
+node_modules
+.pnpm-store
+dist
+coverage
+.DS_Store
+.env
+.env.*
+!.env.example
+.wxt
+.output
+playwright-report
+test-results
+.superpowers
+.idea
+docs

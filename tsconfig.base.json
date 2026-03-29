@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noFallthroughCasesInSwitch": true,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "declaration": true,
+    "baseUrl": ".",
+    "paths": {
+      "@riv/contracts": ["packages/contracts/src/index.ts"],
+      "@riv/contracts/*": ["packages/contracts/src/*"],
+      "@riv/agent": ["packages/agent/src/index.ts"],
+      "@riv/agent/*": ["packages/agent/src/*"]
+    }
+  }
+}

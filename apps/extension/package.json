@@ -1,0 +1,28 @@
+{
+  "name": "@riv/extension",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "dependencies": {
+    "@riv/contracts": "workspace:*",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.0",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "@wxt-dev/module-react": "^1.2.2",
+    "chrome-types": "^0.1.381",
+    "wxt": "^0.20.20"
+  },
+  "scripts": {
+    "build": "wxt build",
+    "dev": "wxt",
+    "postinstall": "wxt prepare",
+    "test": "vitest run --config vitest.config.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  }
+}

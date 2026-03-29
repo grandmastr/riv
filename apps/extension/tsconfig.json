@@ -1,0 +1,8 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "types": ["node", "chrome-types"]
+  },
+  "include": ["entrypoints/**/*.ts", "entrypoints/**/*.tsx", "src/**/*.ts", "src/**/*.tsx", "wxt.config.ts", "vitest.config.ts"]
+}
