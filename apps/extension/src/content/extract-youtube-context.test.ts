@@ -51,6 +51,7 @@ function createWatchPageDocument() {
 function createClosedTranscriptFixture(options?: {
   renderDelayMs?: number;
   transcriptMarkup?: string;
+  disabled?: boolean;
 }) {
   const renderDelayMs = options?.renderDelayMs ?? 50;
   const transcriptMarkup =
@@ -71,7 +72,7 @@ function createClosedTranscriptFixture(options?: {
       <div id="owner">
         <a href="/@rivdev">Riv Dev</a>
       </div>
-      <button aria-label="Show transcript" id="open-transcript">Show transcript</button>
+      <button aria-label="Show transcript" id="open-transcript" ${options?.disabled ? 'disabled' : ''}>Show transcript</button>
       <div id="transcript-host"></div>
     </main>
   `;
@@ -119,8 +120,27 @@ function createClosedTranscriptFixture(options?: {
   };
 }
 
+function createDeferredPromise<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+
+  return {
+    promise,
+    resolve,
+    reject
+  };
+}
+
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
+  vi.resetModules();
+  vi.unstubAllGlobals();
 });
 
 describe('isYouTubeWatchPage', () => {
@@ -513,5 +533,169 @@ describe('extractYouTubeMediaContextWithTranscript', () => {
     });
     expect(closeTranscriptPanel).toHaveBeenCalledTimes(1);
     expect(host?.innerHTML).toBe('');
+  });
+
+  it('returns panel-open-failed when the transcript control cannot be opened', async () => {
+    createClosedTranscriptFixture({
+      disabled: true
+    });
+
+    const result = await extractYouTubeMediaContextWithTranscript(
+      document,
+      'https://www.youtube.com/watch?v=blocked123'
+    );
+
+    expect(YouTubeMediaContextSchema.parse(result)).toMatchObject({
+      kind: 'youtube-video',
+      videoId: 'blocked123',
+      transcript: [],
+      transcriptStatus: 'failed',
+      transcriptFailureReason: 'panel-open-failed'
+    });
+  });
+});
+
+describe('content entrypoint async page extraction', () => {
+  it('keeps the runtime message channel open and defers sendResponse until transcript extraction resolves', async () => {
+    const runtimeListener = vi.fn();
+    const extractPageContextSnapshot = vi.fn(() => ({
+      tabId: 11,
+      url: 'https://www.youtube.com/watch?v=async123',
+      title: 'Async video',
+      pageType: 'generic' as const,
+      capturedAt: '2026-03-30T00:00:00.000Z',
+      metadata: {},
+      contentBlocks: [],
+      media: {
+        kind: 'youtube-video' as const,
+        videoId: 'async123',
+        chapters: [],
+        transcript: [],
+        transcriptStatus: 'not-requested' as const
+      }
+    }));
+    const transcriptDeferred = createDeferredPromise<{
+      kind: 'youtube-video';
+      videoId: string;
+      chapters: [];
+      transcript: [
+        {
+          timestampLabel: '0:32';
+          startSeconds: 32;
+          text: 'Deferred transcript';
+        }
+      ];
+      transcriptStatus: 'available';
+    }>();
+    const extractYouTubeMediaContextWithTranscript = vi.fn(
+      () => transcriptDeferred.promise
+    );
+    const syncPreparedSelection = vi.fn().mockResolvedValue(undefined);
+    const requestSidePanelToggle = vi.fn().mockResolvedValue(undefined);
+    const handleSidePanelShortcutKeydown = vi.fn();
+    const selection = {
+      toString: vi.fn(() => '')
+    };
+
+    vi.doMock('wxt/utils/define-content-script', () => ({
+      defineContentScript: <T>(config: T) => config
+    }));
+    vi.doMock('./extract-page-context', () => ({
+      extractPageContextSnapshot,
+      extractSelectedTextContext: vi.fn(() => null)
+    }));
+    vi.doMock('./extract-youtube-context', () => ({
+      extractYouTubeMediaContextWithTranscript
+    }));
+    vi.doMock('./shortcut-handler', () => ({
+      handleSidePanelShortcutKeydown
+    }));
+    vi.doMock('../lib/messages', () => ({
+      requestSidePanelToggle,
+      syncPreparedSelection
+    }));
+
+    vi.stubGlobal('chrome', {
+      runtime: {
+        onMessage: {
+          addListener: runtimeListener
+        }
+      }
+    });
+    vi.spyOn(window, 'getSelection').mockReturnValue(selection as Selection);
+
+    const contentModule = await import('../../entrypoints/content.ts');
+
+    contentModule.default.main();
+
+    expect(runtimeListener).toHaveBeenCalledTimes(1);
+
+    const onMessage = runtimeListener.mock.calls[0]?.[0] as (
+      message: { type: string; tabId?: number },
+      sender: unknown,
+      sendResponse: ReturnType<typeof vi.fn>
+    ) => boolean;
+    const sendResponse = vi.fn();
+
+    const keepChannelOpen = onMessage(
+      {
+        type: 'riv/extract-page-context',
+        tabId: 11
+      },
+      {},
+      sendResponse
+    );
+
+    expect(keepChannelOpen).toBe(true);
+    expect(extractYouTubeMediaContextWithTranscript).toHaveBeenCalledWith(
+      document,
+      window.location.href
+    );
+    expect(sendResponse).not.toHaveBeenCalled();
+
+    await Promise.resolve();
+
+    expect(sendResponse).not.toHaveBeenCalled();
+
+    transcriptDeferred.resolve({
+      kind: 'youtube-video',
+      videoId: 'async123',
+      chapters: [],
+      transcript: [
+        {
+          timestampLabel: '0:32',
+          startSeconds: 32,
+          text: 'Deferred transcript'
+        }
+      ],
+      transcriptStatus: 'available'
+    });
+
+    await transcriptDeferred.promise;
+    await Promise.resolve();
+
+    expect(sendResponse).toHaveBeenCalledTimes(1);
+    expect(sendResponse).toHaveBeenCalledWith({
+      tabId: 11,
+      url: 'https://www.youtube.com/watch?v=async123',
+      title: 'Async video',
+      pageType: 'generic',
+      capturedAt: '2026-03-30T00:00:00.000Z',
+      metadata: {},
+      contentBlocks: [],
+      media: {
+        kind: 'youtube-video',
+        videoId: 'async123',
+        chapters: [],
+        transcript: [
+          {
+            timestampLabel: '0:32',
+            startSeconds: 32,
+            text: 'Deferred transcript'
+          }
+        ],
+        transcriptStatus: 'available'
+      }
+    });
   });
 });
