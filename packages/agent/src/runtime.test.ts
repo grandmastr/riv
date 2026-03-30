@@ -1029,6 +1029,73 @@ describe('openai model gateway', () => {
     expect(webSearchEnabled).toBe(true);
   });
 
+  it('enables web-search tooling for first-hint legal-status fact checks', async () => {
+    openAIStreamMock.mockReturnValue(
+      createOpenAITextStream('Checking reliable sources now.')
+    );
+
+    const gateway = new OpenAIModelGateway({
+      apiKey: 'test-key'
+    });
+
+    const input: ModelGatewayTurnInput = {
+      thread: {
+        id: 'thread_fact_check_first_hint',
+        userId: 'user_dev',
+        title: 'Fact check first hint',
+        createdAt: NOW,
+        updatedAt: NOW
+      },
+      messages: [
+        {
+          id: 'message_assistant_people_list',
+          threadId: 'thread_fact_check_first_hint',
+          role: 'assistant',
+          content:
+            'Do you mean Lil Tecca, Fleece Johnson, or a different person?',
+          attachments: [],
+          toolInvocations: [],
+          createdAt: NOW
+        }
+      ],
+      userMessage: {
+        id: 'message_user_fact_check_first_hint',
+        threadId: 'thread_fact_check_first_hint',
+        role: 'user',
+        content: 'Is anyone of them an ex con by any chance?',
+        attachments: [],
+        toolInvocations: [],
+        createdAt: NOW
+      },
+      transientAttachments: [],
+      memories: []
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _event of gateway.streamTurn(input)) {
+      // Exhaust the stream so the request is captured.
+    }
+
+    const request = openAIStreamMock.mock.calls[0]?.[0] as {
+      tools?: Array<Record<string, unknown>>;
+      input?: Array<{
+        content: Array<{
+          text: string;
+        }>;
+      }>;
+    };
+
+    const webSearchEnabled = request.tools?.some(
+      (tool) => tool.type === 'web_search_preview'
+    );
+    const systemText = request.input?.[0]?.content[0]?.text ?? '';
+
+    expect(webSearchEnabled).toBe(true);
+    expect(systemText).toContain(
+      'When web search is available for the turn, do not ask the user for permission to search.'
+    );
+  });
+
   it('adds direct YouTube link policy instructions for YouTube link requests', async () => {
     openAIStreamMock.mockReturnValue(
       createOpenAITextStream('Retrying YouTube search with direct links.')

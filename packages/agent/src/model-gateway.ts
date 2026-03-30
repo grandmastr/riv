@@ -772,6 +772,8 @@ const WEB_SEARCH_DISCOVERY_PATTERN =
   /\b(top\s*\d+|most relevant|by relevance|rank(?:ed|ing)?|with links?|direct links?|source links?)\b/;
 const WEB_SEARCH_DISCOVERY_ENTITY_PATTERN =
   /\b(videos?|channels?|playlists?|articles?|posts?|resources?|tutorials?)\b/;
+const WEB_SEARCH_FACT_CHECK_PATTERN =
+  /\b(ex[-\s]?con|felon(?:y)?|convict(?:ed|ion)?|criminal(?:\s+record)?|arrest(?:ed)?|charged|charges|prison|jail|served time|incarcerat(?:ed|ion)|lawsuit|scam|fraud)\b/;
 const YOUTUBE_REFERENCE_PATTERN = /\b(youtube|youtu\.be|\byt\b)\b/;
 const YOUTUBE_LINK_REQUEST_PATTERN =
   /\b(?:direct|actual|real)\s+(?:youtube|yt|youtu\.be)\s+(?:links?|urls?)\b|\b(?:youtube|yt|youtu\.be)\s+(?:links?|urls?)\b|\b(?:links?|urls?)\s+to\s+(?:youtube|yt|youtu\.be)\b/;
@@ -805,6 +807,10 @@ function shouldEnableWebSearchTool(
     WEB_SEARCH_DISCOVERY_PATTERN.test(content) &&
     WEB_SEARCH_DISCOVERY_ENTITY_PATTERN.test(content)
   ) {
+    return true;
+  }
+
+  if (WEB_SEARCH_FACT_CHECK_PATTERN.test(content)) {
     return true;
   }
 
@@ -1085,6 +1091,7 @@ export class OpenAIModelGateway implements ModelGateway {
                 'When the user requests a supported tab-management action and the provided context includes enough tab or tab-group information, call create_action_proposal with the exact action you recommend.',
                 'Do not ask for confirmation in prose when using create_action_proposal; the UI will present the confirmation controls.',
                 'When the user asks for current web facts (prices, availability, recent updates, external catalog checks), use web search before answering.',
+                'When web search is available for the turn, do not ask the user for permission to search. Run the search and answer with sources.',
                 'After web search, include concrete source links in the reply.',
                 ...(shouldSurfaceTranscriptMeta
                   ? [
