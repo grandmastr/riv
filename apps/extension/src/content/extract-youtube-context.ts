@@ -399,7 +399,10 @@ function getCurrentYouTubeVideoIds(document: Document) {
 function hasYouTubeVideoChanged(document: Document, expectedVideoId: string) {
   const currentVideoIds = getCurrentYouTubeVideoIds(document);
 
-  return currentVideoIds.size > 0 && !currentVideoIds.has(expectedVideoId);
+  return (
+    currentVideoIds.size > 1 ||
+    (currentVideoIds.size === 1 && !currentVideoIds.has(expectedVideoId))
+  );
 }
 
 async function waitForTranscriptRows(
@@ -598,6 +601,14 @@ export function extractYouTubeMediaContext(
   const transcriptRows = getTranscriptRows(document);
 
   if (transcriptRows.length > 0) {
+    if (hasYouTubeVideoChanged(document, videoId)) {
+      return {
+        ...base,
+        transcriptStatus: 'not-requested',
+        transcript: []
+      };
+    }
+
     const transcript = truncateTranscript(normalizeTranscriptCues(transcriptRows));
 
     if (transcript.length > 0) {

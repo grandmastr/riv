@@ -187,6 +187,36 @@ function createAlreadyOpenTranscriptFixture(options?: {
   };
 }
 
+function setYouTubeIdentitySources(options: {
+  canonicalUrl?: string;
+  ogUrl?: string;
+}) {
+  const existingCanonical = document.querySelector('link[rel="canonical"]');
+  const existingOgUrl = document.querySelector('meta[property="og:url"]');
+
+  if (options.canonicalUrl) {
+    if (existingCanonical) {
+      existingCanonical.setAttribute('href', options.canonicalUrl);
+    } else {
+      document.head.insertAdjacentHTML(
+        'beforeend',
+        `<link rel="canonical" href="${options.canonicalUrl}" />`
+      );
+    }
+  }
+
+  if (options.ogUrl) {
+    if (existingOgUrl) {
+      existingOgUrl.setAttribute('content', options.ogUrl);
+    } else {
+      document.head.insertAdjacentHTML(
+        'beforeend',
+        `<meta property="og:url" content="${options.ogUrl}" />`
+      );
+    }
+  }
+}
+
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
@@ -533,6 +563,34 @@ describe('extractYouTubeMediaContext', () => {
     });
   });
 
+  it('does not classify stale transcript rows as available when YouTube ids conflict', () => {
+    document.head.innerHTML = `
+      <meta property="og:title" content="Conflicting transcript ids" />
+      <meta property="og:url" content="https://www.youtube.com/watch?v=stale123" />
+      <link rel="canonical" href="https://www.youtube.com/watch?v=fresh456" />
+    `;
+    document.body.innerHTML = `
+      <ytd-engagement-panel-section-list-renderer target-id="engagement-panel-searchable-transcript">
+        <ytd-transcript-segment-renderer>
+          <div id="timestamp">0:32</div>
+          <div id="segment-text">Stale transcript rows should not be trusted.</div>
+        </ytd-transcript-segment-renderer>
+      </ytd-engagement-panel-section-list-renderer>
+    `;
+
+    const result = extractYouTubeMediaContext(
+      document,
+      'https://www.youtube.com/watch?v=fresh456'
+    );
+
+    expect(YouTubeMediaContextSchema.parse(result)).toMatchObject({
+      kind: 'youtube-video',
+      videoId: 'fresh456',
+      transcript: [],
+      transcriptStatus: 'not-requested'
+    });
+  });
+
   it('returns null for non-watch pages so generic extraction can continue unchanged', () => {
     document.head.innerHTML = '';
     document.body.innerHTML = '<main><p>Search results</p></main>';
@@ -797,15 +855,16 @@ describe('extractYouTubeMediaContextWithTranscript', () => {
       `
     });
 
-    document.head.insertAdjacentHTML(
-      'beforeend',
-      '<link rel="canonical" href="https://www.youtube.com/watch?v=async123" />'
-    );
+    setYouTubeIdentitySources({
+      canonicalUrl: 'https://www.youtube.com/watch?v=async123',
+      ogUrl: 'https://www.youtube.com/watch?v=async123'
+    });
 
     window.setTimeout(() => {
-      document
-        .querySelector<HTMLLinkElement>('link[rel="canonical"]')
-        ?.setAttribute('href', 'https://www.youtube.com/watch?v=navigated456');
+      setYouTubeIdentitySources({
+        canonicalUrl: 'https://www.youtube.com/watch?v=navigated456',
+        ogUrl: 'https://www.youtube.com/watch?v=async123'
+      });
     }, 25);
 
     const resultPromise = extractYouTubeMediaContextWithTranscript(
