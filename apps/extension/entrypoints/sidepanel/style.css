@@ -1145,7 +1145,7 @@ textarea {
   resize: none;
   border: 0;
   border-radius: 0;
-  padding: 0.64rem 2.7rem 0.64rem 0.38rem;
+  padding: 0.46rem 2.7rem 0.64rem 0.38rem;
   background: transparent;
   color: var(--riv-ink);
   font-family: var(--riv-serif);
