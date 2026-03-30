@@ -26,7 +26,7 @@ import {
   createAgentRuntime,
   createSequenceIdGenerator
 } from './index';
-import type { ModelGatewayTurnInput } from './types';
+import type { ModelGatewayStreamEvent, ModelGatewayTurnInput } from './types';
 
 const NOW = '2026-03-29T15:00:00.000Z';
 
@@ -136,6 +136,16 @@ function createOpenAITextStream(...deltas: string[]) {
   };
 }
 
+function createOpenAIEventStream(events: unknown[]) {
+  return {
+    async *[Symbol.asyncIterator]() {
+      for (const event of events) {
+        yield event;
+      }
+    }
+  };
+}
+
 beforeEach(() => {
   openAIStreamMock.mockReset();
 });
@@ -196,6 +206,81 @@ describe('agent runtime', () => {
     expect(detail.messages[1]?.content).toBe(
       '## Summary\n\n- First point\n- Second point'
     );
+  });
+
+  it('forwards tool lifecycle stream events with invocation metadata', async () => {
+    const runtime = createAgentRuntime({
+      now: () => NOW,
+      idGenerator: createSequenceIdGenerator([
+        'thread_tool_stream',
+        'message_user_tool_stream',
+        'message_assistant_tool_stream'
+      ]),
+      modelGateway: {
+        async *streamTurn() {
+          yield {
+            type: 'tool_started',
+            invocation: {
+              id: 'tool_web_search_1',
+              tool: 'searchWeb',
+              kind: 'read',
+              args: {
+                query: 'CH alternatives'
+              }
+            }
+          };
+          yield {
+            type: 'tool_finished',
+            invocation: {
+              id: 'tool_web_search_1',
+              tool: 'searchWeb',
+              kind: 'read',
+              args: {
+                query: 'CH alternatives'
+              },
+              result: {
+                status: 'completed'
+              }
+            }
+          };
+          yield {
+            type: 'message_delta',
+            delta: 'Done searching.'
+          };
+        }
+      } as never
+    });
+
+    const thread = await runtime.createThread({
+      title: 'Tool stream',
+      userId: 'user_dev'
+    });
+
+    const envelopes = [];
+    for await (const envelope of runtime.runAssistantTurn({
+      threadId: thread.id,
+      userId: 'user_dev',
+      content: 'Search the web.',
+      attachments: []
+    })) {
+      envelopes.push(MessageEnvelopeSchema.parse(envelope));
+    }
+
+    expect(envelopes.map((envelope) => envelope.payload.type)).toEqual([
+      'tool_started',
+      'tool_finished',
+      'message_delta'
+    ]);
+    expect(
+      envelopes[0]?.payload.type === 'tool_started'
+        ? envelopes[0].payload.invocation.state
+        : null
+    ).toBe('started');
+    expect(
+      envelopes[1]?.payload.type === 'tool_finished'
+        ? envelopes[1].payload.invocation.state
+        : null
+    ).toBe('completed');
   });
 
   it('runs a turn with transient page context and stores the durable conversation state', async () => {
@@ -677,6 +762,7 @@ describe('openai model gateway', () => {
     expect(openAIStreamMock).toHaveBeenCalledTimes(1);
 
     const request = openAIStreamMock.mock.calls[0]?.[0] as {
+      tools?: Array<Record<string, unknown>>;
       input: Array<{
         content: Array<{
           text: string;
@@ -691,14 +777,1281 @@ describe('openai model gateway', () => {
       'Prefer transcript evidence over description inference for YouTube media.'
     );
     expect(systemText).toContain(
-      'Summarize the video thesis first, then support it with concise evidence.'
+      'If the user asks about video or page content, summarize the main point first and support it with concise evidence.'
+    );
+    expect(systemText).toContain(
+      'If the user asks for a browser action or operational task, fulfill that request directly and do not preface the reply with a page or video summary unless they asked for one.'
+    );
+    expect(systemText).toContain(
+      'When the user requests a supported tab-management action and the provided context includes enough tab or tab-group information, call create_action_proposal with the exact action you recommend.'
     );
     expect(systemText).toContain('Include timestamps when available.');
     expect(systemText).toContain(
       'Acknowledge when a transcript is unavailable or failed.'
     );
+    const actionTool = request.tools?.find(
+      (tool) => tool.name === 'create_action_proposal'
+    ) as
+      | {
+          strict?: boolean;
+          parameters?: {
+            properties?: {
+              payload?: {
+                additionalProperties?: boolean;
+              };
+            };
+          };
+        }
+      | undefined;
+    const webSearchEnabled = request.tools?.some(
+      (tool) => tool.type === 'web_search_preview'
+    );
+
+    expect(actionTool).toBeDefined();
+    expect(actionTool?.strict).toBe(false);
+    expect(
+      actionTool?.parameters?.properties?.payload?.additionalProperties
+    ).toBe(true);
+    expect(webSearchEnabled).toBe(false);
     expect(serializedInput).toContain('"kind":"youtube-video"');
     expect(serializedInput).toContain('"transcriptStatus":"available"');
     expect(serializedInput).toContain('"timestampLabel":"0:32"');
+  });
+
+  it('prioritizes explicit browser actions over page or video summaries', async () => {
+    openAIStreamMock.mockReturnValue(
+      createOpenAITextStream('I can help group the tabs.')
+    );
+
+    const gateway = new OpenAIModelGateway({
+      apiKey: 'test-key'
+    });
+
+    const input: ModelGatewayTurnInput = {
+      thread: {
+        id: 'thread_action',
+        userId: 'user_dev',
+        title: 'Browser action',
+        createdAt: NOW,
+        updatedAt: NOW
+      },
+      messages: [],
+      userMessage: {
+        id: 'message_user_action',
+        threadId: 'thread_action',
+        role: 'user',
+        content: 'Group the browser tabs.',
+        attachments: [],
+        toolInvocations: [],
+        createdAt: NOW
+      },
+      transientAttachments: [youtubeAttachment],
+      memories: []
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _event of gateway.streamTurn(input)) {
+      // Exhaust the stream so the request is captured.
+    }
+
+    expect(openAIStreamMock).toHaveBeenCalledTimes(1);
+
+    const request = openAIStreamMock.mock.calls[0]?.[0] as {
+      input: Array<{
+        content: Array<{
+          text: string;
+        }>;
+      }>;
+    };
+
+    const systemText = request.input[0]?.content[0]?.text ?? '';
+
+    expect(systemText).toContain(
+      'If the user asks for a browser action or operational task, fulfill that request directly and do not preface the reply with a page or video summary unless they asked for one.'
+    );
+    expect(systemText).not.toContain(
+      'Summarize the video thesis first, then support it with concise evidence.'
+    );
+  });
+
+  it('enables web-search tooling for explicit web lookup requests', async () => {
+    openAIStreamMock.mockReturnValue(
+      createOpenAITextStream('Searching the web for current options.')
+    );
+
+    const gateway = new OpenAIModelGateway({
+      apiKey: 'test-key'
+    });
+
+    const input: ModelGatewayTurnInput = {
+      thread: {
+        id: 'thread_web_lookup_tools',
+        userId: 'user_dev',
+        title: 'Web lookup',
+        createdAt: NOW,
+        updatedAt: NOW
+      },
+      messages: [],
+      userMessage: {
+        id: 'message_user_web_lookup_tools',
+        threadId: 'thread_web_lookup_tools',
+        role: 'user',
+        content: 'Search the web for current CH alternatives and prices.',
+        attachments: [],
+        toolInvocations: [],
+        createdAt: NOW
+      },
+      transientAttachments: [pageAttachment],
+      memories: []
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _event of gateway.streamTurn(input)) {
+      // Exhaust the stream so the request is captured.
+    }
+
+    const request = openAIStreamMock.mock.calls[0]?.[0] as {
+      tools?: Array<Record<string, unknown>>;
+    };
+
+    const webSearchEnabled = request.tools?.some(
+      (tool) => tool.type === 'web_search_preview'
+    );
+
+    expect(webSearchEnabled).toBe(true);
+  });
+
+  it('forces action proposal tool choice for tab actions with tab context', async () => {
+    openAIStreamMock.mockReturnValue(
+      createOpenAITextStream('Preparing tab grouping proposal.')
+    );
+
+    const gateway = new OpenAIModelGateway({
+      apiKey: 'test-key'
+    });
+
+    const input: ModelGatewayTurnInput = {
+      thread: {
+        id: 'thread_force_action_tool',
+        userId: 'user_dev',
+        title: 'Force tab action',
+        createdAt: NOW,
+        updatedAt: NOW
+      },
+      messages: [],
+      userMessage: {
+        id: 'message_user_force_action_tool',
+        threadId: 'thread_force_action_tool',
+        role: 'user',
+        content: 'Group these tabs for me.',
+        attachments: [],
+        toolInvocations: [],
+        createdAt: NOW
+      },
+      transientAttachments: [
+        {
+          kind: 'tabs',
+          tabs: [
+            {
+              tabId: 1,
+              windowId: 1,
+              index: 0,
+              url: 'https://docs.riv.dev',
+              title: 'Riv docs',
+              active: true,
+              pinned: false,
+              groupId: -1
+            },
+            {
+              tabId: 2,
+              windowId: 1,
+              index: 1,
+              url: 'https://github.com/riv/extension',
+              title: 'Riv GitHub',
+              active: false,
+              pinned: false,
+              groupId: -1
+            }
+          ]
+        }
+      ],
+      memories: []
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _event of gateway.streamTurn(input)) {
+      // Exhaust the stream so the request is captured.
+    }
+
+    const request = openAIStreamMock.mock.calls[0]?.[0] as {
+      tool_choice?: {
+        type?: string;
+        name?: string;
+      };
+      tools?: Array<Record<string, unknown>>;
+    };
+
+    expect(request.tool_choice).toEqual({
+      type: 'function',
+      name: 'create_action_proposal'
+    });
+    expect(
+      request.tools?.some((tool) => tool.type === 'web_search_preview')
+    ).toBe(false);
+  });
+
+  it('forces tab-action handling for continuation phrasing with tab context', async () => {
+    openAIStreamMock.mockReturnValue(createOpenAIEventStream([]));
+
+    const gateway = new OpenAIModelGateway({
+      apiKey: 'test-key'
+    });
+
+    const input: ModelGatewayTurnInput = {
+      thread: {
+        id: 'thread_force_action_followup',
+        userId: 'user_dev',
+        title: 'Follow-up grouping',
+        createdAt: NOW,
+        updatedAt: NOW
+      },
+      messages: [],
+      userMessage: {
+        id: 'message_user_force_action_followup',
+        threadId: 'thread_force_action_followup',
+        role: 'user',
+        content: 'Looks good, group them',
+        attachments: [],
+        toolInvocations: [],
+        createdAt: NOW
+      },
+      transientAttachments: [
+        {
+          kind: 'tabs',
+          tabs: [
+            {
+              tabId: 1,
+              windowId: 1,
+              index: 0,
+              url: 'https://docs.riv.dev',
+              title: 'Riv docs',
+              active: true,
+              pinned: false,
+              groupId: -1
+            },
+            {
+              tabId: 2,
+              windowId: 1,
+              index: 1,
+              url: 'https://github.com/riv/extension',
+              title: 'Riv GitHub',
+              active: false,
+              pinned: false,
+              groupId: -1
+            }
+          ]
+        }
+      ],
+      memories: []
+    };
+
+    const events: ModelGatewayStreamEvent[] = [];
+    for await (const event of gateway.streamTurn(input)) {
+      events.push(event);
+    }
+
+    const request = openAIStreamMock.mock.calls[0]?.[0] as {
+      tool_choice?: {
+        type?: string;
+        name?: string;
+      };
+    };
+
+    expect(request.tool_choice).toEqual({
+      type: 'function',
+      name: 'create_action_proposal'
+    });
+    expect(events[0]?.type).toBe('proposal');
+  });
+
+  it('falls back to deterministic tab grouping when model output is unusable', async () => {
+    openAIStreamMock.mockReturnValue(
+      createOpenAIEventStream([
+        {
+          type: 'response.output_item.done',
+          item: {
+            type: 'function_call',
+            name: 'create_action_proposal',
+            arguments: '{"kind":"groupTabs"}'
+          }
+        }
+      ])
+    );
+
+    const gateway = new OpenAIModelGateway({
+      apiKey: 'test-key'
+    });
+
+    const input: ModelGatewayTurnInput = {
+      thread: {
+        id: 'thread_grouping_fallback',
+        userId: 'user_dev',
+        title: 'Grouping fallback',
+        createdAt: NOW,
+        updatedAt: NOW
+      },
+      messages: [],
+      userMessage: {
+        id: 'message_user_grouping_fallback',
+        threadId: 'thread_grouping_fallback',
+        role: 'user',
+        content: 'Group tabs',
+        attachments: [],
+        toolInvocations: [],
+        createdAt: NOW
+      },
+      transientAttachments: [
+        {
+          kind: 'tabs',
+          tabs: [
+            {
+              tabId: 1,
+              windowId: 1,
+              index: 0,
+              url: 'https://www.youtube.com/watch?v=alpha',
+              title: 'Video A',
+              active: true,
+              pinned: false,
+              groupId: -1
+            },
+            {
+              tabId: 2,
+              windowId: 1,
+              index: 1,
+              url: 'https://www.youtube.com/watch?v=beta',
+              title: 'Video B',
+              active: false,
+              pinned: false,
+              groupId: -1
+            },
+            {
+              tabId: 3,
+              windowId: 1,
+              index: 2,
+              url: 'https://github.com/riv/extension/issues',
+              title: 'GitHub Issues',
+              active: false,
+              pinned: false,
+              groupId: -1
+            },
+            {
+              tabId: 4,
+              windowId: 1,
+              index: 3,
+              url: 'https://docs.riv.dev/guide',
+              title: 'Riv docs',
+              active: false,
+              pinned: false,
+              groupId: -1
+            }
+          ]
+        }
+      ],
+      memories: []
+    };
+
+    const events: ModelGatewayStreamEvent[] = [];
+    for await (const event of gateway.streamTurn(input)) {
+      events.push(event);
+    }
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.type).toBe('proposal');
+
+    if (events[0]?.type !== 'proposal') {
+      return;
+    }
+
+    const payload = events[0].proposal.payload as {
+      groups?: Array<{ title?: string; tabIds?: number[] }>;
+      tabIds?: number[];
+    };
+    const groups = payload.groups ?? [];
+
+    expect(groups.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(payload.tabIds ?? [])).toEqual(new Set([1, 2, 3, 4]));
+  });
+
+  it('emits validated action proposals from OpenAI function calls', async () => {
+    openAIStreamMock.mockReturnValue(
+      createOpenAIEventStream([
+        {
+          type: 'response.function_call_arguments.done',
+          name: 'create_action_proposal',
+          arguments: JSON.stringify({
+            kind: 'groupTabs',
+            reason: 'The tabs all belong to the same Riv research task.',
+            preview: {
+              title: 'Group Riv research tabs',
+              summary: 'Create one group for the current Riv work tabs.',
+              items: ['docs.riv.dev', 'github.com/riv']
+            },
+            riskLevel: 'low',
+            payload: {
+              tabIds: [7, 8],
+              title: 'Riv research'
+            }
+          })
+        }
+      ])
+    );
+
+    const gateway = new OpenAIModelGateway({
+      apiKey: 'test-key'
+    });
+
+    const input: ModelGatewayTurnInput = {
+      thread: {
+        id: 'thread_proposal',
+        userId: 'user_dev',
+        title: 'Tab organization',
+        createdAt: NOW,
+        updatedAt: NOW
+      },
+      messages: [],
+      userMessage: {
+        id: 'message_user_proposal',
+        threadId: 'thread_proposal',
+        role: 'user',
+        content: 'Group the browser tabs.',
+        attachments: [],
+        toolInvocations: [],
+        createdAt: NOW
+      },
+      transientAttachments: [
+        {
+          kind: 'tabs',
+          tabs: [
+            {
+              tabId: 7,
+              windowId: 1,
+              index: 0,
+              url: 'https://docs.riv.dev',
+              title: 'Riv docs',
+              active: true,
+              pinned: false,
+              groupId: -1
+            },
+            {
+              tabId: 8,
+              windowId: 1,
+              index: 1,
+              url: 'https://github.com/riv',
+              title: 'Riv repo',
+              active: false,
+              pinned: false,
+              groupId: -1
+            }
+          ]
+        }
+      ],
+      memories: []
+    };
+
+    const events: ModelGatewayStreamEvent[] = [];
+    for await (const event of gateway.streamTurn(input)) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      {
+        type: 'proposal',
+        proposal: {
+          kind: 'groupTabs',
+          reason: 'The tabs all belong to the same Riv research task.',
+          preview: {
+            title: 'Group Riv research tabs',
+            summary: 'Create one group for the current Riv work tabs.',
+            items: ['docs.riv.dev', 'github.com/riv']
+          },
+          riskLevel: 'low',
+          payload: {
+            tabIds: [7, 8],
+            title: 'Riv research'
+          }
+        }
+      }
+    ]);
+  });
+
+  it('uses an explicit retry fallback when the model returns no text or proposal', async () => {
+    openAIStreamMock.mockReturnValue(createOpenAIEventStream([]));
+
+    const gateway = new OpenAIModelGateway({
+      apiKey: 'test-key'
+    });
+
+    const input: ModelGatewayTurnInput = {
+      thread: {
+        id: 'thread_empty',
+        userId: 'user_dev',
+        title: 'Empty turn',
+        createdAt: NOW,
+        updatedAt: NOW
+      },
+      messages: [],
+      userMessage: {
+        id: 'message_user_empty',
+        threadId: 'thread_empty',
+        role: 'user',
+        content: 'Yo',
+        attachments: [],
+        toolInvocations: [],
+        createdAt: NOW
+      },
+      transientAttachments: [],
+      memories: []
+    };
+
+    const events: ModelGatewayStreamEvent[] = [];
+    for await (const event of gateway.streamTurn(input)) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      {
+        type: 'message_delta',
+        delta: "I didn't get a usable response from the model. Send that again."
+      }
+    ]);
+  });
+
+  it('emits tool lifecycle events for web search calls', async () => {
+    openAIStreamMock.mockReturnValue(
+      createOpenAIEventStream([
+        {
+          type: 'response.web_search_call.in_progress',
+          item_id: 'ws_1',
+          output_index: 0,
+          sequence_number: 0
+        },
+        {
+          type: 'response.web_search_call.completed',
+          item_id: 'ws_1',
+          output_index: 0,
+          sequence_number: 0
+        }
+      ])
+    );
+
+    const gateway = new OpenAIModelGateway({
+      apiKey: 'test-key'
+    });
+
+    const input: ModelGatewayTurnInput = {
+      thread: {
+        id: 'thread_web_search',
+        userId: 'user_dev',
+        title: 'Web search',
+        createdAt: NOW,
+        updatedAt: NOW
+      },
+      messages: [],
+      userMessage: {
+        id: 'message_user_web_search',
+        threadId: 'thread_web_search',
+        role: 'user',
+        content: 'Search CH alternatives',
+        attachments: [],
+        toolInvocations: [],
+        createdAt: NOW
+      },
+      transientAttachments: [],
+      memories: []
+    };
+
+    const events: ModelGatewayStreamEvent[] = [];
+    for await (const event of gateway.streamTurn(input)) {
+      events.push(event);
+    }
+
+    expect(events[0]).toEqual({
+      type: 'tool_started',
+      invocation: {
+        id: 'ws_1',
+        tool: 'searchWeb',
+        kind: 'read',
+        args: {}
+      }
+    });
+    expect(events[1]).toEqual({
+      type: 'tool_finished',
+      invocation: {
+        id: 'ws_1',
+        tool: 'searchWeb',
+        kind: 'read',
+        args: {},
+        result: {
+          status: 'completed'
+        }
+      }
+    });
+    expect(events[2]).toEqual({
+      type: 'message_delta',
+      delta: "I didn't get a usable response from the model. Send that again."
+    });
+  });
+
+  it('repairs group-tabs tool calls that omit payload when tab context is available', async () => {
+    openAIStreamMock.mockReturnValue(
+      createOpenAIEventStream([
+        {
+          type: 'response.function_call_arguments.done',
+          name: 'create_action_proposal',
+          arguments: JSON.stringify({
+            kind: 'groupTabs',
+            reason:
+              "User requested 'Create groups' and I can group the open tabs.",
+            preview: {
+              title: "Create group: 'Watch'",
+              summary:
+                "Make a new tab group named 'Watch' to hold your currently open YouTube tab.",
+              items: [
+                'Coulda Been Love 2 Episode 2: Mile High Club — https://www.youtube.com/watch?v=demo'
+              ]
+            },
+            riskLevel: 'low'
+          })
+        }
+      ])
+    );
+
+    const gateway = new OpenAIModelGateway({
+      apiKey: 'test-key'
+    });
+
+    const input: ModelGatewayTurnInput = {
+      thread: {
+        id: 'thread_repair',
+        userId: 'user_dev',
+        title: 'Create groups',
+        createdAt: NOW,
+        updatedAt: NOW
+      },
+      messages: [],
+      userMessage: {
+        id: 'message_user_repair',
+        threadId: 'thread_repair',
+        role: 'user',
+        content: 'Create groups',
+        attachments: [],
+        toolInvocations: [],
+        createdAt: NOW
+      },
+      transientAttachments: [
+        {
+          kind: 'tabs',
+          tabs: [
+            {
+              tabId: 1,
+              windowId: 1,
+              index: 0,
+              url: 'https://www.youtube.com/watch?v=demo',
+              title: 'Coulda Been Love 2 Episode 2: Mile High Club',
+              active: true,
+              pinned: false,
+              groupId: -1
+            }
+          ]
+        }
+      ],
+      memories: []
+    };
+
+    const events: ModelGatewayStreamEvent[] = [];
+    for await (const event of gateway.streamTurn(input)) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      {
+        type: 'proposal',
+        proposal: {
+          kind: 'groupTabs',
+          reason: "User requested 'Create groups' and I can group the open tabs.",
+          preview: {
+            title: "Create group: 'Watch'",
+            summary:
+              "Make a new tab group named 'Watch' to hold your currently open YouTube tab.",
+            items: [
+              'Coulda Been Love 2 Episode 2: Mile High Club — https://www.youtube.com/watch?v=demo'
+            ]
+          },
+          riskLevel: 'low',
+          payload: {
+            tabIds: [1],
+            title: 'Watch'
+          }
+        }
+      }
+    ]);
+  });
+
+  it('repairs the live create-groups tool call when the model omits payload', async () => {
+    openAIStreamMock.mockReturnValue(
+      createOpenAIEventStream([
+        {
+          type: 'response.function_call_arguments.done',
+          name: 'create_action_proposal',
+          arguments: JSON.stringify({
+            kind: 'groupTabs',
+            reason:
+              "User asked to 'Create groups' and I can group the single open YouTube tab into a named group for organization.",
+            preview: {
+              title: "Proposed tab group: 'Entertainment'",
+              summary: 'Create 1 tab group to organize your open YouTube tab.',
+              items: [
+                'Entertainment — 1 tab: Coulda Been Love 2 Episode 2: Mile High Club (https://www.youtube.com/watch?v=demo)'
+              ]
+            },
+            riskLevel: 'low'
+          })
+        }
+      ])
+    );
+
+    const gateway = new OpenAIModelGateway({
+      apiKey: 'test-key'
+    });
+
+    const input: ModelGatewayTurnInput = {
+      thread: {
+        id: 'thread_live_repair',
+        userId: 'user_dev',
+        title: 'Create groups',
+        createdAt: NOW,
+        updatedAt: NOW
+      },
+      messages: [],
+      userMessage: {
+        id: 'message_user_live_repair',
+        threadId: 'thread_live_repair',
+        role: 'user',
+        content: 'Create groups',
+        attachments: [],
+        toolInvocations: [],
+        createdAt: NOW
+      },
+      transientAttachments: [
+        {
+          kind: 'tabs',
+          tabs: [
+            {
+              tabId: 1,
+              windowId: 1,
+              index: 0,
+              url: 'https://www.youtube.com/watch?v=demo',
+              title: 'Coulda Been Love 2 Episode 2: Mile High Club',
+              active: true,
+              pinned: false,
+              groupId: -1
+            }
+          ]
+        },
+        {
+          kind: 'tabGroups',
+          tabGroups: []
+        }
+      ],
+      memories: []
+    };
+
+    const events: ModelGatewayStreamEvent[] = [];
+    for await (const event of gateway.streamTurn(input)) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      {
+        type: 'proposal',
+        proposal: {
+          kind: 'groupTabs',
+          reason:
+            "User asked to 'Create groups' and I can group the single open YouTube tab into a named group for organization.",
+          preview: {
+            title: "Proposed tab group: 'Entertainment'",
+            summary: 'Create 1 tab group to organize your open YouTube tab.',
+            items: [
+              'Entertainment — 1 tab: Coulda Been Love 2 Episode 2: Mile High Club (https://www.youtube.com/watch?v=demo)'
+            ]
+          },
+          riskLevel: 'low',
+          payload: {
+            tabIds: [1],
+            title: 'Entertainment'
+          }
+        }
+      }
+    ]);
+  });
+
+  it('parses the OpenAI SDK function-call stream when the done event omits the tool name', async () => {
+    openAIStreamMock.mockReturnValue(
+      createOpenAIEventStream([
+        {
+          type: 'response.output_item.added',
+          item: {
+            type: 'function_call',
+            name: 'create_action_proposal'
+          },
+          output_index: 1
+        },
+        {
+          type: 'response.function_call_arguments.delta',
+          delta:
+            '{"kind":"groupTabs","reason":"User asked to \\"Create groups\\" and there is one open tab—group the YouTube tab into a new tab group for organization.","preview":{"title":"Create group: \\"YouTube\\" (1 tab)","summary":"Create a new tab group named \\"YouTube\\" containing the single open video tab to keep media tabs organized.","items":["Coulda Been Love 2 Episode 2: Mile High Club — https://www.youtube.com/watch?v=demo"]},"riskLevel":"low"}',
+          output_index: 1
+        },
+        {
+          type: 'response.function_call_arguments.done',
+          arguments:
+            '{"kind":"groupTabs","reason":"User asked to \\"Create groups\\" and there is one open tab—group the YouTube tab into a new tab group for organization.","preview":{"title":"Create group: \\"YouTube\\" (1 tab)","summary":"Create a new tab group named \\"YouTube\\" containing the single open video tab to keep media tabs organized.","items":["Coulda Been Love 2 Episode 2: Mile High Club — https://www.youtube.com/watch?v=demo"]},"riskLevel":"low"}',
+          output_index: 1
+        }
+      ])
+    );
+
+    const gateway = new OpenAIModelGateway({
+      apiKey: 'test-key'
+    });
+
+    const input: ModelGatewayTurnInput = {
+      thread: {
+        id: 'thread_sdk_repair',
+        userId: 'user_dev',
+        title: 'Create groups',
+        createdAt: NOW,
+        updatedAt: NOW
+      },
+      messages: [],
+      userMessage: {
+        id: 'message_user_sdk_repair',
+        threadId: 'thread_sdk_repair',
+        role: 'user',
+        content: 'Create groups',
+        attachments: [],
+        toolInvocations: [],
+        createdAt: NOW
+      },
+      transientAttachments: [
+        {
+          kind: 'tabs',
+          tabs: [
+            {
+              tabId: 1,
+              windowId: 1,
+              index: 0,
+              url: 'https://www.youtube.com/watch?v=demo',
+              title: 'Coulda Been Love 2 Episode 2: Mile High Club',
+              active: true,
+              pinned: false,
+              groupId: -1
+            }
+          ]
+        },
+        {
+          kind: 'tabGroups',
+          tabGroups: []
+        }
+      ],
+      memories: []
+    };
+
+    const events: ModelGatewayStreamEvent[] = [];
+    for await (const event of gateway.streamTurn(input)) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      {
+        type: 'proposal',
+        proposal: {
+          kind: 'groupTabs',
+          reason:
+            'User asked to "Create groups" and there is one open tab—group the YouTube tab into a new tab group for organization.',
+          preview: {
+            title: 'Create group: "YouTube" (1 tab)',
+            summary:
+              'Create a new tab group named "YouTube" containing the single open video tab to keep media tabs organized.',
+            items: [
+              'Coulda Been Love 2 Episode 2: Mile High Club — https://www.youtube.com/watch?v=demo'
+            ]
+          },
+          riskLevel: 'low',
+          payload: {
+            tabIds: [1],
+            title: 'YouTube'
+          }
+        }
+      }
+    ]);
+  });
+
+  it('expands singleton group-tabs payloads to related tabs', async () => {
+    openAIStreamMock.mockReturnValue(
+      createOpenAIEventStream([
+        {
+          type: 'response.function_call_arguments.done',
+          name: 'create_action_proposal',
+          arguments: JSON.stringify({
+            kind: 'groupTabs',
+            reason: 'Group related YouTube tabs together.',
+            preview: {
+              title: "Create group: 'YouTube'",
+              summary: 'Group related YouTube tabs.',
+              items: ['YouTube tabs']
+            },
+            riskLevel: 'low',
+            payload: {
+              tabIds: [1],
+              title: 'YouTube'
+            }
+          })
+        }
+      ])
+    );
+
+    const gateway = new OpenAIModelGateway({
+      apiKey: 'test-key'
+    });
+
+    const input: ModelGatewayTurnInput = {
+      thread: {
+        id: 'thread_related_grouping',
+        userId: 'user_dev',
+        title: 'Create groups',
+        createdAt: NOW,
+        updatedAt: NOW
+      },
+      messages: [],
+      userMessage: {
+        id: 'message_user_related_grouping',
+        threadId: 'thread_related_grouping',
+        role: 'user',
+        content: 'Create groups',
+        attachments: [],
+        toolInvocations: [],
+        createdAt: NOW
+      },
+      transientAttachments: [
+        {
+          kind: 'tabs',
+          tabs: [
+            {
+              tabId: 1,
+              windowId: 1,
+              index: 0,
+              url: 'https://www.youtube.com/watch?v=alpha',
+              title: 'Video A',
+              active: true,
+              pinned: false,
+              groupId: -1
+            },
+            {
+              tabId: 2,
+              windowId: 1,
+              index: 1,
+              url: 'https://www.youtube.com/watch?v=beta',
+              title: 'Video B',
+              active: false,
+              pinned: false,
+              groupId: -1
+            },
+            {
+              tabId: 3,
+              windowId: 1,
+              index: 2,
+              url: 'https://docs.riv.dev/guide',
+              title: 'Riv docs',
+              active: false,
+              pinned: false,
+              groupId: -1
+            }
+          ]
+        }
+      ],
+      memories: []
+    };
+
+    const events: ModelGatewayStreamEvent[] = [];
+    for await (const event of gateway.streamTurn(input)) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      {
+        type: 'proposal',
+        proposal: {
+          kind: 'groupTabs',
+          reason: 'Group related YouTube tabs together.',
+          preview: {
+            title: "Create group: 'YouTube'",
+            summary: 'Group related YouTube tabs.',
+            items: ['YouTube tabs']
+          },
+          riskLevel: 'low',
+          payload: {
+            tabIds: [1, 2],
+            title: 'YouTube'
+          }
+        }
+      }
+    ]);
+  });
+
+  it('builds multi-category tab groups when enough related tabs are available', async () => {
+    openAIStreamMock.mockReturnValue(
+      createOpenAIEventStream([
+        {
+          type: 'response.function_call_arguments.done',
+          name: 'create_action_proposal',
+          arguments: JSON.stringify({
+            kind: 'groupTabs',
+            reason: 'Group tabs by category.',
+            preview: {
+              title: 'Group tabs',
+              summary: 'Group all related tabs.',
+              items: ['Group tabs']
+            },
+            riskLevel: 'low',
+            payload: {
+              tabIds: [1],
+              title: 'Tabs'
+            }
+          })
+        }
+      ])
+    );
+
+    const gateway = new OpenAIModelGateway({
+      apiKey: 'test-key'
+    });
+
+    const input: ModelGatewayTurnInput = {
+      thread: {
+        id: 'thread_multi_category_grouping',
+        userId: 'user_dev',
+        title: 'Group tabs',
+        createdAt: NOW,
+        updatedAt: NOW
+      },
+      messages: [],
+      userMessage: {
+        id: 'message_user_multi_category_grouping',
+        threadId: 'thread_multi_category_grouping',
+        role: 'user',
+        content: 'Group tabs',
+        attachments: [],
+        toolInvocations: [],
+        createdAt: NOW
+      },
+      transientAttachments: [
+        {
+          kind: 'tabs',
+          tabs: [
+            {
+              tabId: 1,
+              windowId: 1,
+              index: 0,
+              url: 'https://www.youtube.com/watch?v=alpha',
+              title: 'Video A',
+              active: true,
+              pinned: false,
+              groupId: -1
+            },
+            {
+              tabId: 2,
+              windowId: 1,
+              index: 1,
+              url: 'https://github.com/riv/extension/issues',
+              title: 'GitHub Issues',
+              active: false,
+              pinned: false,
+              groupId: -1
+            },
+            {
+              tabId: 3,
+              windowId: 1,
+              index: 2,
+              url: 'https://www.jumia.com.ng/catalog/?q=headphones',
+              title: 'Jumia Headphones',
+              active: false,
+              pinned: false,
+              groupId: -1
+            },
+            {
+              tabId: 4,
+              windowId: 1,
+              index: 3,
+              url: 'https://www.amazon.com/s?k=headphones',
+              title: 'Amazon Headphones',
+              active: false,
+              pinned: false,
+              groupId: -1
+            },
+            {
+              tabId: 5,
+              windowId: 1,
+              index: 4,
+              url: 'https://www.youtube.com/watch?v=beta',
+              title: 'Video B',
+              active: false,
+              pinned: false,
+              groupId: -1
+            },
+            {
+              tabId: 6,
+              windowId: 1,
+              index: 5,
+              url: 'https://docs.riv.dev/guide',
+              title: 'Riv docs',
+              active: false,
+              pinned: false,
+              groupId: -1
+            }
+          ]
+        }
+      ],
+      memories: []
+    };
+
+    const events: ModelGatewayStreamEvent[] = [];
+    for await (const event of gateway.streamTurn(input)) {
+      events.push(event);
+    }
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.type).toBe('proposal');
+
+    if (events[0]?.type !== 'proposal') {
+      return;
+    }
+
+    const payload = events[0].proposal.payload as {
+      groups?: Array<{ title?: string; tabIds?: number[] }>;
+      tabIds?: number[];
+    };
+    const groups = payload.groups ?? [];
+    const flattenedTabIds = new Set(payload.tabIds ?? []);
+
+    expect(groups).toHaveLength(3);
+    expect(groups.map((group) => group.title)).toEqual(
+      expect.arrayContaining(['Media', 'Work', 'Shopping'])
+    );
+    expect(flattenedTabIds).toEqual(new Set([1, 2, 3, 4, 5, 6]));
+  });
+
+  it('infers a group title from broader preview-title phrasing', async () => {
+    openAIStreamMock.mockReturnValue(
+      createOpenAIEventStream([
+        {
+          type: 'response.output_item.added',
+          item: {
+            type: 'function_call',
+            name: 'create_action_proposal'
+          },
+          output_index: 1
+        },
+        {
+          type: 'response.function_call_arguments.done',
+          arguments: JSON.stringify({
+            kind: 'groupTabs',
+            reason:
+              'User requested creating groups and there is one open tab available to group.',
+            preview: {
+              title: "Create a new tab group 'YouTube' with 1 tab",
+              summary:
+                "Create a new tab group named 'YouTube' containing the listed tab.",
+              items: [
+                'Coulda Been Love 2 Episode 2: Mile High Club — https://www.youtube.com/watch?v=demo (window 1, tab index 0)'
+              ]
+            },
+            riskLevel: 'low'
+          }),
+          output_index: 1
+        }
+      ])
+    );
+
+    const gateway = new OpenAIModelGateway({
+      apiKey: 'test-key'
+    });
+
+    const input: ModelGatewayTurnInput = {
+      thread: {
+        id: 'thread_title_inference',
+        userId: 'user_dev',
+        title: 'Create groups',
+        createdAt: NOW,
+        updatedAt: NOW
+      },
+      messages: [],
+      userMessage: {
+        id: 'message_user_title_inference',
+        threadId: 'thread_title_inference',
+        role: 'user',
+        content: 'Create groups',
+        attachments: [],
+        toolInvocations: [],
+        createdAt: NOW
+      },
+      transientAttachments: [
+        {
+          kind: 'tabs',
+          tabs: [
+            {
+              tabId: 1,
+              windowId: 1,
+              index: 0,
+              url: 'https://www.youtube.com/watch?v=demo',
+              title: 'Coulda Been Love 2 Episode 2: Mile High Club',
+              active: true,
+              pinned: false,
+              groupId: -1
+            }
+          ]
+        }
+      ],
+      memories: []
+    };
+
+    const events: ModelGatewayStreamEvent[] = [];
+    for await (const event of gateway.streamTurn(input)) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      {
+        type: 'proposal',
+        proposal: {
+          kind: 'groupTabs',
+          reason:
+            'User requested creating groups and there is one open tab available to group.',
+          preview: {
+            title: "Create a new tab group 'YouTube' with 1 tab",
+            summary:
+              "Create a new tab group named 'YouTube' containing the listed tab.",
+            items: [
+              'Coulda Been Love 2 Episode 2: Mile High Club — https://www.youtube.com/watch?v=demo (window 1, tab index 0)'
+            ]
+          },
+          riskLevel: 'low',
+          payload: {
+            tabIds: [1],
+            title: 'YouTube'
+          }
+        }
+      }
+    ]);
   });
 });
