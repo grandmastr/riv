@@ -71,6 +71,49 @@ function parseTimestampLabel(value: string) {
   return parts[0] * 3600 + parts[1] * 60 + parts[2];
 }
 
+function formatTimestampLabel(totalSeconds: number) {
+  const wholeSeconds = Math.max(0, Math.floor(totalSeconds));
+  const hours = Math.floor(wholeSeconds / 3600);
+  const minutes = Math.floor((wholeSeconds % 3600) / 60);
+  const remainingSeconds = wholeSeconds % 60;
+
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`
+    : `${minutes}:${String(remainingSeconds).padStart(2, '0')}`;
+}
+
+function parseHrefTimestamp(value: string | null) {
+  const normalized = normalizeText(value);
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (/^\d+$/.test(normalized)) {
+    return Number(normalized);
+  }
+
+  const match = normalized.match(
+    /^(?:(?<hours>\d+)h)?(?:(?<minutes>\d+)m)?(?:(?<seconds>\d+)s)?$/i
+  );
+
+  if (!match?.groups) {
+    return null;
+  }
+
+  const hours = Number(match.groups.hours ?? '0');
+  const minutes = Number(match.groups.minutes ?? '0');
+  const seconds = Number(match.groups.seconds ?? '0');
+
+  if ([hours, minutes, seconds].some((part) => Number.isNaN(part))) {
+    return null;
+  }
+
+  const totalSeconds = hours * 3600 + minutes * 60 + seconds;
+
+  return totalSeconds > 0 || /0s?$/.test(normalized) ? totalSeconds : null;
+}
+
 function extractTimestampFromHref(href: string) {
   const parsed = parseUrl(href);
 
@@ -82,9 +125,9 @@ function extractTimestampFromHref(href: string) {
   }
 
   const secondsText = parsed.searchParams.get('t') ?? parsed.searchParams.get('start');
-  const seconds = secondsText ? Number(secondsText.replace(/s$/i, '')) : Number.NaN;
+  const seconds = parseHrefTimestamp(secondsText);
 
-  if (!Number.isFinite(seconds)) {
+  if (seconds === null) {
     return {
       timestampLabel: undefined,
       startSeconds: undefined
@@ -92,15 +135,9 @@ function extractTimestampFromHref(href: string) {
   }
 
   const wholeSeconds = Math.max(0, Math.floor(seconds));
-  const hours = Math.floor(wholeSeconds / 3600);
-  const minutes = Math.floor((wholeSeconds % 3600) / 60);
-  const remainingSeconds = wholeSeconds % 60;
 
   return {
-    timestampLabel:
-      hours > 0
-        ? `${hours}:${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`
-        : `${minutes}:${String(remainingSeconds).padStart(2, '0')}`,
+    timestampLabel: formatTimestampLabel(wholeSeconds),
     startSeconds: wholeSeconds
   };
 }
@@ -265,7 +302,8 @@ export function truncateTranscript(cues: YouTubeTranscriptCue[]) {
       break;
     }
 
-    const nextTotal = totalCharacters + cue.text.length;
+    const nextTotal =
+      totalCharacters + cue.text.length + cue.timestampLabel.length;
 
     if (nextTotal > MAX_TRANSCRIPT_CHARACTERS) {
       break;

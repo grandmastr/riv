@@ -104,6 +104,48 @@ describe('extractYouTubeMediaContext', () => {
     ]);
   });
 
+  it('parses chapter timestamps from common YouTube time query formats', () => {
+    document.head.innerHTML = `
+      <meta property="og:title" content="Chapter formats" />
+    `;
+    document.body.innerHTML = `
+      <div id="chapters">
+        <a href="/watch?v=abc123&t=1m32s">
+          <span class="chapter-title">Minute format</span>
+        </a>
+        <a href="/watch?v=abc123&t=1h2m3s">
+          <span class="chapter-title">Hour format</span>
+        </a>
+        <a href="/watch?v=abc123&start=1m32s">
+          <span class="chapter-title">Start format</span>
+        </a>
+      </div>
+    `;
+
+    const result = extractYouTubeMediaContext(
+      document,
+      'https://www.youtube.com/watch?v=abc123'
+    );
+
+    expect(result?.chapters).toEqual([
+      {
+        title: 'Minute format',
+        timestampLabel: '1:32',
+        startSeconds: 92
+      },
+      {
+        title: 'Hour format',
+        timestampLabel: '1:02:03',
+        startSeconds: 3723
+      },
+      {
+        title: 'Start format',
+        timestampLabel: '1:32',
+        startSeconds: 92
+      }
+    ]);
+  });
+
   it('truncates transcript cues deterministically from the start using both hard caps', () => {
     document.head.innerHTML = `
       <meta property="og:title" content="Budgeted transcript" />
@@ -141,6 +183,45 @@ describe('extractYouTubeMediaContext', () => {
     ).toBeLessThanOrEqual(12000);
     expect(result?.transcript[0]?.timestampLabel).toBe('0:00');
     expect(result?.transcript[0]?.text.startsWith('Cue 1')).toBe(true);
+  });
+
+  it('counts timestamp labels toward the transcript character budget', () => {
+    document.head.innerHTML = `
+      <meta property="og:title" content="Timestamp budget" />
+    `;
+
+    const rows = Array.from({ length: 151 }, (_, index) => {
+      const minute = Math.floor(index / 60);
+      const second = index % 60;
+
+      return `
+        <ytd-transcript-segment-renderer>
+          <div id="timestamp">${minute}:${String(second).padStart(2, '0')}</div>
+          <div id="segment-text">${'a'.repeat(77)}</div>
+        </ytd-transcript-segment-renderer>
+      `;
+    }).join('');
+
+    document.body.innerHTML = `
+      <ytd-engagement-panel-section-list-renderer target-id="engagement-panel-searchable-transcript">
+        ${rows}
+      </ytd-engagement-panel-section-list-renderer>
+    `;
+
+    const result = extractYouTubeMediaContext(
+      document,
+      'https://www.youtube.com/watch?v=budget456'
+    );
+    const payloadCharacters =
+      result?.transcript.reduce(
+        (total, cue) => total + cue.text.length + cue.timestampLabel.length,
+        0
+      ) ?? 0;
+
+    expect(result?.transcriptStatus).toBe('available');
+    expect(result?.transcript.length).toBe(148);
+    expect(payloadCharacters).toBeLessThanOrEqual(12000);
+    expect(result?.transcript.at(-1)?.timestampLabel).toBe('2:27');
   });
 
   it('marks transcript as not requested when the button exists but rows are not rendered', () => {
