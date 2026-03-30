@@ -371,7 +371,7 @@ async function waitForTranscriptRows(
   while (Date.now() - startedAt <= options.timeoutMs) {
     const rows = getTranscriptRows(document);
 
-    if (rows.length > 0) {
+    if (rows.length > 0 && normalizeTranscriptCues(rows).length > 0) {
       return rows;
     }
 
@@ -393,6 +393,20 @@ function buildTranscriptFailureResult(
     transcript: [],
     transcriptStatus: 'failed',
     transcriptFailureReason
+  };
+}
+
+function buildPendingTranscriptResult(
+  media: YouTubeMediaContext
+): Extract<YouTubeMediaContext, { transcriptStatus: 'not-requested' }> {
+  return {
+    kind: media.kind,
+    videoId: media.videoId,
+    channelName: media.channelName,
+    description: media.description,
+    chapters: media.chapters,
+    transcript: [],
+    transcriptStatus: 'not-requested'
   };
 }
 
@@ -553,10 +567,20 @@ export async function extractYouTubeMediaContextWithTranscript(
   url: string,
   options?: ExtractYouTubeMediaContextWithTranscriptOptions
 ): Promise<YouTubeMediaContext | null> {
+  const panelWasOpen = isTranscriptPanelOpen(document);
   const media = extractYouTubeMediaContext(document, url);
 
-  if (!media || media.transcriptStatus !== 'not-requested') {
+  if (!media) {
     return media;
+  }
+
+  const pendingMedia =
+    panelWasOpen && media.transcriptStatus !== 'available'
+      ? buildPendingTranscriptResult(media)
+      : media;
+
+  if (pendingMedia.transcriptStatus !== 'not-requested') {
+    return pendingMedia;
   }
 
   const resolvedOptions = {
@@ -564,7 +588,6 @@ export async function extractYouTubeMediaContextWithTranscript(
     pollIntervalMs:
       options?.pollIntervalMs ?? DEFAULT_TRANSCRIPT_POLL_INTERVAL_MS
   };
-  const panelWasOpen = isTranscriptPanelOpen(document);
   let openedByExtension = false;
 
   try {
@@ -572,7 +595,7 @@ export async function extractYouTubeMediaContextWithTranscript(
       const transcriptButton = getTranscriptOpenButton(document);
 
       if (!transcriptButton || !clickElement(transcriptButton)) {
-        return buildTranscriptFailureResult(media, 'panel-open-failed');
+        return buildTranscriptFailureResult(pendingMedia, 'panel-open-failed');
       }
 
       openedByExtension = true;
@@ -581,17 +604,17 @@ export async function extractYouTubeMediaContextWithTranscript(
     const transcriptRows = await waitForTranscriptRows(document, resolvedOptions);
 
     if (transcriptRows.length === 0) {
-      return buildTranscriptFailureResult(media, 'panel-timeout');
+      return buildTranscriptFailureResult(pendingMedia, 'panel-timeout');
     }
 
     const transcript = truncateTranscript(normalizeTranscriptCues(transcriptRows));
 
     if (transcript.length === 0) {
-      return buildTranscriptFailureResult(media, 'parse-failed');
+      return buildTranscriptFailureResult(pendingMedia, 'parse-failed');
     }
 
     return {
-      ...media,
+      ...pendingMedia,
       transcriptStatus: 'available',
       transcript
     };

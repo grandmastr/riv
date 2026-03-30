@@ -140,6 +140,53 @@ function createDeferredPromise<T>() {
   };
 }
 
+function createAlreadyOpenTranscriptFixture(options?: {
+  transcriptMarkup?: string;
+  hydrateDelayMs?: number;
+}) {
+  const transcriptMarkup =
+    options?.transcriptMarkup ??
+    `
+      <ytd-transcript-segment-renderer>
+        <div id="timestamp">0:32</div>
+        <div id="segment-text">The already-open panel eventually hydrates.</div>
+      </ytd-transcript-segment-renderer>
+    `;
+
+  document.head.innerHTML = `
+    <meta property="og:title" content="Already open transcript" />
+    <meta name="description" content="Already-open transcript test." />
+  `;
+  document.body.innerHTML = `
+    <main>
+      <div id="owner">
+        <a href="/@rivdev">Riv Dev</a>
+      </div>
+      <div id="transcript-host">
+        <ytd-engagement-panel-section-list-renderer target-id="engagement-panel-searchable-transcript">
+          <button aria-label="Close transcript">Close transcript</button>
+        </ytd-engagement-panel-section-list-renderer>
+      </div>
+    </main>
+  `;
+
+  const host = document.querySelector<HTMLElement>('#transcript-host');
+
+  if (options?.hydrateDelayMs !== undefined) {
+    window.setTimeout(() => {
+      host
+        ?.querySelector<HTMLElement>(
+          'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"]'
+        )
+        ?.insertAdjacentHTML('beforeend', transcriptMarkup);
+    }, options.hydrateDelayMs);
+  }
+
+  return {
+    host
+  };
+}
+
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
@@ -503,7 +550,7 @@ describe('extractYouTubeMediaContextWithTranscript', () => {
     expect(host?.innerHTML).toBe('');
   });
 
-  it('restores the prior closed state when transcript rows render but cannot be parsed', async () => {
+  it('times out and restores the prior closed state when transcript rows never hydrate into cues', async () => {
     vi.useFakeTimers();
 
     const { host, closeTranscriptPanel } = createClosedTranscriptFixture({
@@ -524,7 +571,7 @@ describe('extractYouTubeMediaContextWithTranscript', () => {
       }
     );
 
-    await vi.advanceTimersByTimeAsync(75);
+    await vi.advanceTimersByTimeAsync(300);
 
     const result = await resultPromise;
 
@@ -533,7 +580,7 @@ describe('extractYouTubeMediaContextWithTranscript', () => {
       videoId: 'parsefail123',
       transcript: [],
       transcriptStatus: 'failed',
-      transcriptFailureReason: 'parse-failed'
+      transcriptFailureReason: 'panel-timeout'
     });
     expect(closeTranscriptPanel).toHaveBeenCalledTimes(1);
     expect(host?.innerHTML).toBe('');
@@ -555,6 +602,95 @@ describe('extractYouTubeMediaContextWithTranscript', () => {
       transcript: [],
       transcriptStatus: 'failed',
       transcriptFailureReason: 'panel-open-failed'
+    });
+  });
+
+  it('waits on an already-open panel with no opener button until cues appear', async () => {
+    vi.useFakeTimers();
+
+    createAlreadyOpenTranscriptFixture({
+      hydrateDelayMs: 75
+    });
+
+    const resultPromise = extractYouTubeMediaContextWithTranscript(
+      document,
+      'https://www.youtube.com/watch?v=openpanel123',
+      {
+        timeoutMs: 250,
+        pollIntervalMs: 25
+      }
+    );
+
+    await vi.advanceTimersByTimeAsync(100);
+
+    const result = await resultPromise;
+
+    expect(result).toMatchObject({
+      kind: 'youtube-video',
+      videoId: 'openpanel123',
+      transcriptStatus: 'available',
+      transcript: [
+        {
+          timestampLabel: '0:32',
+          startSeconds: 32,
+          text: 'The already-open panel eventually hydrates.'
+        }
+      ]
+    });
+  });
+
+  it('keeps waiting when transcript row shells appear before cue content hydrates', async () => {
+    vi.useFakeTimers();
+
+    const { host } = createClosedTranscriptFixture({
+      transcriptMarkup: `
+        <ytd-transcript-segment-renderer data-shell="true">
+          <div id="timestamp"></div>
+          <div id="segment-text"></div>
+        </ytd-transcript-segment-renderer>
+      `,
+      renderDelayMs: 25
+    });
+
+    window.setTimeout(() => {
+      const row = host?.querySelector<HTMLElement>(
+        'ytd-transcript-segment-renderer[data-shell="true"]'
+      );
+
+      if (!row) {
+        return;
+      }
+
+      row.innerHTML = `
+        <div id="timestamp">0:47</div>
+        <div id="segment-text">Hydrated cue content arrives later.</div>
+      `;
+    }, 100);
+
+    const resultPromise = extractYouTubeMediaContextWithTranscript(
+      document,
+      'https://www.youtube.com/watch?v=hydrate123',
+      {
+        timeoutMs: 250,
+        pollIntervalMs: 25
+      }
+    );
+
+    await vi.advanceTimersByTimeAsync(150);
+
+    const result = await resultPromise;
+
+    expect(result).toMatchObject({
+      kind: 'youtube-video',
+      videoId: 'hydrate123',
+      transcriptStatus: 'available',
+      transcript: [
+        {
+          timestampLabel: '0:47',
+          startSeconds: 47,
+          text: 'Hydrated cue content arrives later.'
+        }
+      ]
     });
   });
 
