@@ -194,6 +194,96 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+async function createContentPageExtractionHarness(options?: {
+  media?: Record<string, unknown>;
+}) {
+  const runtimeListener = vi.fn();
+  const extractPageContextSnapshot = vi.fn(() => ({
+    tabId: 11,
+    url: 'https://www.youtube.com/watch?v=async123',
+    title: 'Async video',
+    pageType: 'generic' as const,
+    capturedAt: '2026-03-30T00:00:00.000Z',
+    metadata: {},
+    contentBlocks: [],
+    media:
+      options?.media ??
+      ({
+        kind: 'youtube-video' as const,
+        videoId: 'async123',
+        chapters: [],
+        transcript: [],
+        transcriptStatus: 'not-requested' as const
+      } satisfies Record<string, unknown>)
+  }));
+  const transcriptDeferred = createDeferredPromise<{
+    kind: 'youtube-video';
+    videoId: string;
+    chapters: [];
+    transcript: [
+      {
+        timestampLabel: '0:32';
+        startSeconds: 32;
+        text: 'Deferred transcript';
+      }
+    ];
+    transcriptStatus: 'available';
+  }>();
+  const extractYouTubeMediaContextWithTranscript = vi.fn(
+    () => transcriptDeferred.promise
+  );
+  const syncPreparedSelection = vi.fn().mockResolvedValue(undefined);
+  const requestSidePanelToggle = vi.fn().mockResolvedValue(undefined);
+  const handleSidePanelShortcutKeydown = vi.fn();
+  const selection = {
+    toString: vi.fn(() => '')
+  };
+
+  vi.doMock('wxt/utils/define-content-script', () => ({
+    defineContentScript: <T>(config: T) => config
+  }));
+  vi.doMock('./extract-page-context', () => ({
+    extractPageContextSnapshot,
+    extractSelectedTextContext: vi.fn(() => null)
+  }));
+  vi.doMock('./extract-youtube-context', () => ({
+    extractYouTubeMediaContextWithTranscript
+  }));
+  vi.doMock('./shortcut-handler', () => ({
+    handleSidePanelShortcutKeydown
+  }));
+  vi.doMock('../lib/messages', () => ({
+    requestSidePanelToggle,
+    syncPreparedSelection
+  }));
+
+  vi.stubGlobal('chrome', {
+    runtime: {
+      onMessage: {
+        addListener: runtimeListener
+      }
+    }
+  });
+  vi.spyOn(window, 'getSelection').mockReturnValue(selection as Selection);
+
+  const contentModule = await import('../../entrypoints/content.ts');
+
+  contentModule.default.main();
+
+  const onMessage = runtimeListener.mock.calls[0]?.[0] as (
+    message: { type: string; tabId?: number },
+    sender: unknown,
+    sendResponse: ReturnType<typeof vi.fn>
+  ) => boolean;
+
+  return {
+    extractPageContextSnapshot,
+    extractYouTubeMediaContextWithTranscript,
+    onMessage,
+    transcriptDeferred
+  };
+}
+
 describe('isYouTubeWatchPage', () => {
   it('detects canonical YouTube watch URLs and extracts the video id', () => {
     expect(isYouTubeWatchPage('https://www.youtube.com/watch?v=abc123')).toBe(
@@ -735,84 +825,8 @@ describe('extractYouTubeMediaContextWithTranscript', () => {
 
 describe('content entrypoint async page extraction', () => {
   it('keeps the runtime message channel open and defers sendResponse until transcript extraction resolves', async () => {
-    const runtimeListener = vi.fn();
-    const extractPageContextSnapshot = vi.fn(() => ({
-      tabId: 11,
-      url: 'https://www.youtube.com/watch?v=async123',
-      title: 'Async video',
-      pageType: 'generic' as const,
-      capturedAt: '2026-03-30T00:00:00.000Z',
-      metadata: {},
-      contentBlocks: [],
-      media: {
-        kind: 'youtube-video' as const,
-        videoId: 'async123',
-        chapters: [],
-        transcript: [],
-        transcriptStatus: 'not-requested' as const
-      }
-    }));
-    const transcriptDeferred = createDeferredPromise<{
-      kind: 'youtube-video';
-      videoId: string;
-      chapters: [];
-      transcript: [
-        {
-          timestampLabel: '0:32';
-          startSeconds: 32;
-          text: 'Deferred transcript';
-        }
-      ];
-      transcriptStatus: 'available';
-    }>();
-    const extractYouTubeMediaContextWithTranscript = vi.fn(
-      () => transcriptDeferred.promise
-    );
-    const syncPreparedSelection = vi.fn().mockResolvedValue(undefined);
-    const requestSidePanelToggle = vi.fn().mockResolvedValue(undefined);
-    const handleSidePanelShortcutKeydown = vi.fn();
-    const selection = {
-      toString: vi.fn(() => '')
-    };
-
-    vi.doMock('wxt/utils/define-content-script', () => ({
-      defineContentScript: <T>(config: T) => config
-    }));
-    vi.doMock('./extract-page-context', () => ({
-      extractPageContextSnapshot,
-      extractSelectedTextContext: vi.fn(() => null)
-    }));
-    vi.doMock('./extract-youtube-context', () => ({
-      extractYouTubeMediaContextWithTranscript
-    }));
-    vi.doMock('./shortcut-handler', () => ({
-      handleSidePanelShortcutKeydown
-    }));
-    vi.doMock('../lib/messages', () => ({
-      requestSidePanelToggle,
-      syncPreparedSelection
-    }));
-
-    vi.stubGlobal('chrome', {
-      runtime: {
-        onMessage: {
-          addListener: runtimeListener
-        }
-      }
-    });
-    vi.spyOn(window, 'getSelection').mockReturnValue(selection as Selection);
-
-    const contentModule = await import('../../entrypoints/content.ts');
-
-    contentModule.default.main();
-
-    expect(runtimeListener).toHaveBeenCalledTimes(1);
-
-    const onMessage = runtimeListener.mock.calls[0]?.[0] as (
-      message: { type: string; tabId?: number },
-      sender: unknown,
-      sendResponse: ReturnType<typeof vi.fn>
-    ) => boolean;
+    const { extractYouTubeMediaContextWithTranscript, onMessage, transcriptDeferred } =
+      await createContentPageExtractionHarness();
     const sendResponse = vi.fn();
 
     const keepChannelOpen = onMessage(
@@ -873,6 +887,134 @@ describe('content entrypoint async page extraction', () => {
           }
         ],
         transcriptStatus: 'available'
+      }
+    });
+  });
+
+  it('takes the async path when an already-open panel is initially classified as unavailable', async () => {
+    const { extractYouTubeMediaContextWithTranscript, onMessage, transcriptDeferred } =
+      await createContentPageExtractionHarness({
+        media: {
+          kind: 'youtube-video',
+          videoId: 'async123',
+          chapters: [],
+          transcript: [],
+          transcriptStatus: 'unavailable',
+          transcriptFailureReason: 'button-missing'
+        }
+      });
+    const sendResponse = vi.fn();
+
+    const keepChannelOpen = onMessage(
+      {
+        type: 'riv/extract-page-context',
+        tabId: 11
+      },
+      {},
+      sendResponse
+    );
+
+    expect(keepChannelOpen).toBe(true);
+    expect(extractYouTubeMediaContextWithTranscript).toHaveBeenCalledWith(
+      document,
+      window.location.href
+    );
+    expect(sendResponse).not.toHaveBeenCalled();
+
+    transcriptDeferred.resolve({
+      kind: 'youtube-video',
+      videoId: 'async123',
+      chapters: [],
+      transcript: [
+        {
+          timestampLabel: '0:32',
+          startSeconds: 32,
+          text: 'Deferred transcript'
+        }
+      ],
+      transcriptStatus: 'available'
+    });
+
+    await transcriptDeferred.promise;
+    await Promise.resolve();
+
+    expect(sendResponse).toHaveBeenCalledTimes(1);
+    expect(sendResponse.mock.calls[0]?.[0]).toMatchObject({
+      media: {
+        kind: 'youtube-video',
+        videoId: 'async123',
+        transcriptStatus: 'available',
+        transcript: [
+          {
+            timestampLabel: '0:32',
+            startSeconds: 32,
+            text: 'Deferred transcript'
+          }
+        ]
+      }
+    });
+  });
+
+  it('takes the async path when an already-open panel is initially classified as parse-failed shell rows', async () => {
+    const { extractYouTubeMediaContextWithTranscript, onMessage, transcriptDeferred } =
+      await createContentPageExtractionHarness({
+        media: {
+          kind: 'youtube-video',
+          videoId: 'async123',
+          chapters: [],
+          transcript: [],
+          transcriptStatus: 'failed',
+          transcriptFailureReason: 'parse-failed'
+        }
+      });
+    const sendResponse = vi.fn();
+
+    const keepChannelOpen = onMessage(
+      {
+        type: 'riv/extract-page-context',
+        tabId: 11
+      },
+      {},
+      sendResponse
+    );
+
+    expect(keepChannelOpen).toBe(true);
+    expect(extractYouTubeMediaContextWithTranscript).toHaveBeenCalledWith(
+      document,
+      window.location.href
+    );
+    expect(sendResponse).not.toHaveBeenCalled();
+
+    transcriptDeferred.resolve({
+      kind: 'youtube-video',
+      videoId: 'async123',
+      chapters: [],
+      transcript: [
+        {
+          timestampLabel: '0:32',
+          startSeconds: 32,
+          text: 'Deferred transcript'
+        }
+      ],
+      transcriptStatus: 'available'
+    });
+
+    await transcriptDeferred.promise;
+    await Promise.resolve();
+
+    expect(sendResponse).toHaveBeenCalledTimes(1);
+    expect(sendResponse.mock.calls[0]?.[0]).toMatchObject({
+      media: {
+        kind: 'youtube-video',
+        videoId: 'async123',
+        transcriptStatus: 'available',
+        transcript: [
+          {
+            timestampLabel: '0:32',
+            startSeconds: 32,
+            text: 'Deferred transcript'
+          }
+        ]
       }
     });
   });

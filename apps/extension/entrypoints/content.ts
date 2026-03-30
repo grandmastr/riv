@@ -64,7 +64,7 @@ export default defineContentScript({
 
         if (
           snapshot.media?.kind !== 'youtube-video' ||
-          snapshot.media.transcriptStatus !== 'not-requested'
+          snapshot.media.transcriptStatus === 'available'
         ) {
           sendResponse(snapshot);
           return false;
