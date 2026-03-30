@@ -88,6 +88,11 @@ textarea {
   animation: riv-fade-in 180ms ease-out;
 }
 
+.riv-header-section {
+  display: grid;
+  gap: 0.34rem;
+}
+
 .riv-header-row,
 .riv-brand,
 .riv-message-meta,
@@ -136,9 +141,19 @@ textarea {
   gap: 0.1rem;
 }
 
+.riv-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
 .riv-proposal-card h3,
 .riv-section-heading h2 {
   margin: 0;
+}
+
+.riv-section-heading-inline {
+  gap: 0;
 }
 
 .riv-eyebrow,
@@ -171,6 +186,226 @@ textarea {
   white-space: nowrap;
 }
 
+.riv-header-create-chat {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.85rem;
+  height: 2.85rem;
+  min-width: 2.85rem;
+  min-height: 2.85rem;
+  padding: 0;
+  line-height: 1;
+}
+
+.riv-header-create-chat svg {
+  width: 0.98rem;
+  height: 0.98rem;
+}
+
+.riv-header-open-chats {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.85rem;
+  height: 2.85rem;
+  min-width: 2.85rem;
+  min-height: 2.85rem;
+  padding: 0;
+  line-height: 1;
+}
+
+.riv-header-open-chats svg {
+  width: 1.02rem;
+  height: 1.02rem;
+  transition: transform 220ms ease;
+}
+
+.riv-header-open-chats[data-state='open'] svg {
+  transform: rotate(90deg) scale(1.04);
+}
+
+.riv-thread-menu-trigger-count {
+  position: absolute;
+  right: 0.28rem;
+  bottom: 0.34rem;
+  min-width: 1rem;
+  min-height: 1rem;
+  padding: 0 0.24rem;
+  border-radius: 999px;
+  border: 1px solid var(--riv-line-strong);
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--riv-ink-soft);
+  font-size: 0.64rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.riv-thread-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 0.8rem;
+  padding: 1rem;
+  overflow: hidden;
+  border-top: 1px solid var(--riv-line);
+  background:
+    radial-gradient(
+      120% 90% at 50% 0%,
+      rgba(255, 255, 255, 0.56),
+      transparent 65%
+    ),
+    var(--riv-paper);
+  animation: riv-fade-in 180ms ease-out;
+}
+
+.riv-thread-overlay-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.7rem;
+}
+
+.riv-button.riv-thread-overlay-close {
+  width: auto;
+  min-height: 2.45rem;
+  padding: 0.54rem 0.9rem;
+}
+
+.riv-thread-overlay-list {
+  display: grid;
+  align-content: start;
+  gap: 0.46rem;
+  overflow: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  padding-right: 0.06rem;
+}
+
+.riv-thread-overlay-list::-webkit-scrollbar {
+  display: none;
+}
+
+.riv-thread-overlay-item {
+  width: 100%;
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-height: 3.45rem;
+  padding: 0.5rem 0.56rem;
+  border-radius: 1rem;
+  border: 1px solid var(--riv-line-strong);
+  background: rgba(255, 255, 255, 0.76);
+  color: var(--riv-ink);
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    transform 160ms ease;
+}
+
+.riv-thread-overlay-item[data-state='active'] {
+  border-color: rgba(27, 23, 19, 0.3);
+  background: rgba(27, 23, 19, 0.08);
+}
+
+.riv-thread-overlay-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  align-content: center;
+  gap: 0.2rem;
+  padding: 0.36rem 0.42rem;
+  border: 0;
+  border-radius: 0.72rem;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.riv-thread-overlay-select:disabled {
+  opacity: 0.62;
+  cursor: wait;
+}
+
+.riv-thread-overlay-item-actions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.riv-thread-overlay-item-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.87rem;
+  line-height: 1.24;
+  text-align: left;
+}
+
+.riv-thread-overlay-item-summary {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--riv-ink-soft);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.76rem;
+  line-height: 1.3;
+}
+
+.riv-thread-overlay-item-count {
+  flex: 0 0 auto;
+  min-width: 1.3rem;
+  min-height: 1.3rem;
+  padding: 0 0.34rem;
+  border-radius: 999px;
+  border: 1px solid var(--riv-line-strong);
+  background: rgba(255, 255, 255, 0.88);
+  font-size: 0.69rem;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.riv-button.riv-thread-overlay-delete {
+  width: 2.05rem;
+  height: 2.05rem;
+  min-width: 2.05rem;
+  min-height: 2.05rem;
+  padding: 0;
+  border-radius: 0.72rem;
+  border-color: rgba(27, 23, 19, 0.13);
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.92),
+    rgba(245, 238, 227, 0.98)
+  );
+  color: rgba(27, 23, 19, 0.7);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.84),
+    0 1px 2px rgba(27, 23, 19, 0.06);
+}
+
+.riv-thread-overlay-delete svg {
+  width: 1.08rem;
+  height: 1.08rem;
+}
+
+.riv-button.riv-thread-overlay-delete:disabled {
+  opacity: 0.52;
+  color: rgba(27, 23, 19, 0.45);
+  background: rgba(255, 255, 255, 0.58);
+  box-shadow: none;
+}
+
 .riv-status {
   margin: 0;
   color: var(--riv-ink-soft);
@@ -187,6 +422,8 @@ textarea {
   height: 100%;
   min-height: 0;
   overflow: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
   padding: 0.6rem 1rem 6.9rem;
   -webkit-mask-image: linear-gradient(
     180deg,
@@ -202,6 +439,10 @@ textarea {
     #000 calc(100% - 4.6rem),
     transparent 100%
   );
+}
+
+.riv-transcript::-webkit-scrollbar {
+  display: none;
 }
 
 .riv-transcript-frame {
@@ -486,6 +727,84 @@ textarea {
   align-items: center;
 }
 
+.riv-task-strip {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  padding-bottom: 0.12rem;
+}
+
+.riv-task-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.riv-task-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 2.75rem;
+  border-radius: 0.95rem;
+  border: 1px solid var(--riv-line-strong);
+  background: rgba(255, 255, 255, 0.74);
+  color: var(--riv-ink);
+  cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    transform 160ms ease;
+}
+
+.riv-task-pill:disabled {
+  opacity: 0.62;
+  cursor: wait;
+}
+
+.riv-task-pill {
+  flex: 0 0 auto;
+  max-width: 16rem;
+  padding: 0.52rem 0.72rem;
+  align-items: flex-start;
+  flex-direction: column;
+}
+
+.riv-task-pill-title {
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--riv-sans);
+  font-size: 0.79rem;
+  font-weight: 600;
+  line-height: 1.15;
+}
+
+.riv-task-pill-summary {
+  width: 100%;
+  overflow: hidden;
+  color: var(--riv-ink-soft);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.73rem;
+  line-height: 1.2;
+}
+
+.riv-task-pill[data-risk='high'] {
+  border-color: rgba(141, 55, 44, 0.46);
+}
+
+.riv-task-pill[data-risk='medium'] {
+  border-color: rgba(132, 96, 48, 0.4);
+}
+
+.riv-header-empty {
+  margin: 0;
+  color: var(--riv-ink-faint);
+  font-size: 0.78rem;
+  line-height: 1.3;
+}
+
 .riv-message-user .riv-provenance {
   justify-content: flex-end;
 }
@@ -615,7 +934,9 @@ textarea {
 
 .riv-composer textarea {
   width: 100%;
-  min-height: 4.5rem;
+  min-height: 3.375rem;
+  max-height: 10.5rem;
+  overflow: hidden;
   resize: none;
   border: 0;
   border-radius: 0;
@@ -626,6 +947,12 @@ textarea {
   font-size: 0.92rem;
   line-height: 1.54;
   outline: none;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.riv-composer textarea::-webkit-scrollbar {
+  display: none;
 }
 
 .riv-composer textarea::placeholder {
@@ -645,10 +972,12 @@ textarea {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 2.25rem;
-  height: 2.25rem;
-  min-width: 2.25rem;
-  min-height: 2.25rem;
+  box-sizing: border-box;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
   padding: 0;
   border-radius: 999px;
   line-height: 1;
@@ -679,6 +1008,22 @@ textarea {
     box-shadow 180ms ease;
 }
 
+.riv-button.riv-header-create-chat {
+  width: 2.85rem;
+  height: 2.85rem;
+  min-width: 2.85rem;
+  min-height: 2.85rem;
+  padding: 0;
+}
+
+.riv-button.riv-header-open-chats {
+  width: 2.85rem;
+  height: 2.85rem;
+  min-width: 2.85rem;
+  min-height: 2.85rem;
+  padding: 0;
+}
+
 .riv-button-primary {
   background: var(--riv-ink);
   color: var(--riv-paper-elevated);
@@ -701,12 +1046,22 @@ textarea {
   box-shadow: none;
 }
 
+.riv-button.riv-composer-send[data-state='disabled']:disabled {
+  opacity: 1;
+  border-color: rgba(27, 23, 19, 0.24);
+  background: rgba(27, 23, 19, 0.28);
+  color: rgba(252, 248, 242, 0.98);
+}
+
 .riv-button[data-state='busy']:disabled {
   cursor: wait;
 }
 
 .riv-button:focus-visible,
-.riv-chip:focus-visible {
+.riv-chip:focus-visible,
+.riv-thread-overlay-select:focus-visible,
+.riv-thread-overlay-delete:focus-visible,
+.riv-task-pill:focus-visible {
   outline: 2px solid rgba(27, 23, 19, 0.4);
   outline-offset: 2px;
 }
@@ -720,6 +1075,20 @@ textarea {
   .riv-button-secondary:hover:not(:disabled) {
     transform: translateY(-1px);
     background: rgba(255, 255, 255, 0.74);
+  }
+
+  .riv-button.riv-thread-overlay-delete:hover:not(:disabled) {
+    transform: none;
+    border-color: rgba(161, 58, 47, 0.34);
+    background: rgba(210, 92, 76, 0.14);
+    color: #7f2b22;
+    box-shadow: 0 4px 10px rgba(116, 33, 24, 0.12);
+  }
+
+  .riv-thread-overlay-item:hover,
+  .riv-task-pill:hover {
+    transform: translateY(-1px);
+    background: rgba(255, 255, 255, 0.9);
   }
 }
 
@@ -736,6 +1105,27 @@ textarea {
     flex-direction: column;
   }
 
+  .riv-header-create-chat {
+    align-self: flex-end;
+  }
+
+  .riv-header-actions {
+    align-self: flex-end;
+  }
+
+  .riv-thread-overlay {
+    padding-left: 0.85rem;
+    padding-right: 0.85rem;
+  }
+
+  .riv-button.riv-header-create-chat {
+    width: 2.85rem;
+  }
+
+  .riv-button.riv-header-open-chats {
+    width: 2.85rem;
+  }
+
   .riv-message-user .riv-message-surface {
     margin-left: 1rem;
   }
@@ -750,6 +1140,10 @@ textarea {
     width: 100%;
   }
 
+  .riv-button.riv-thread-overlay-close {
+    width: auto;
+  }
+
   .riv-composer textarea {
     padding-right: 3.35rem;
     padding-bottom: 0.1rem;
@@ -759,7 +1153,10 @@ textarea {
     right: 0.1rem;
     left: auto;
     bottom: 0.15rem;
-    width: 2.7rem;
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    min-height: 32px;
   }
 }
 

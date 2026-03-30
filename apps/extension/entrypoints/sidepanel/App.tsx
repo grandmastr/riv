@@ -24,7 +24,10 @@ import {
   sendBackgroundMessage,
   subscribeToPreparedSelection
 } from '../../src/lib/messages';
-import { RivSidepanel } from '../../src/sidepanel/panel';
+import {
+  RivSidepanel,
+  type PendingTaskItem
+} from '../../src/sidepanel/panel';
 
 const VIEWER_ID = 'user_dev';
 
@@ -80,12 +83,65 @@ function upsertById<T extends { id: string }>(items: T[], nextItem: T) {
   return nextItems;
 }
 
+function upsertThreadById(
+  items: ConversationThread[],
+  nextThread: ConversationThread
+) {
+  return [...items.filter((item) => item.id !== nextThread.id), nextThread]
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+}
+
+function collectPendingTasks(details: Array<{
+  threadId: string;
+  proposals: ActionProposal[];
+}>): PendingTaskItem[] {
+  return details
+    .flatMap(({ threadId, proposals }) =>
+      proposals.map((proposal) => ({
+        proposalId: proposal.id,
+        threadId,
+        title: proposal.preview.title,
+        summary: proposal.preview.summary,
+        riskLevel: proposal.riskLevel,
+        createdAt: proposal.createdAt
+      }))
+    )
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+}
+
+type ThreadSummaryMap = Record<string, string>;
+
+function toThreadSummary(messages: ConversationMessage[]) {
+  const latestMessage = [...messages]
+    .reverse()
+    .find((message) => message.content.trim().length > 0);
+
+  if (!latestMessage) {
+    return null;
+  }
+
+  const normalized = latestMessage.content
+    .replace(/[#>*`_[\]\(\)\-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.length <= 110) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, 107).trimEnd()}...`;
+}
+
 function toErrorMessage(error: unknown) {
   if (error instanceof Error && error.message) {
     return error.message;
   }
 
-  return 'Riv hit an unexpected error.';
+  return 'Riva hit an unexpected error.';
 }
 
 function stripTransientAttachments(attachments: ContextAttachment[]) {
@@ -138,6 +194,70 @@ function isTabManagementRequest(
   );
 }
 
+function getAttachmentScope(
+  content: string,
+  recentMessages: ConversationMessage[]
+) {
+  const shouldIncludeTabContext = isTabManagementRequest(
+    content,
+    recentMessages
+  );
+
+  return {
+    shouldIncludeTabContext,
+    shouldIncludePageContext: !shouldIncludeTabContext,
+    shouldIncludeSelection: !shouldIncludeTabContext
+  };
+}
+
+function formatAttachmentReadLabel(scope: {
+  shouldIncludeTabContext: boolean;
+  shouldIncludePageContext: boolean;
+  shouldIncludeSelection: boolean;
+}) {
+  if (scope.shouldIncludeTabContext) {
+    return 'Reading open tabs...';
+  }
+
+  if (scope.shouldIncludePageContext && scope.shouldIncludeSelection) {
+    return 'Reading page context...';
+  }
+
+  if (scope.shouldIncludePageContext) {
+    return 'Reading page context...';
+  }
+
+  if (scope.shouldIncludeSelection) {
+    return 'Reading selected text...';
+  }
+
+  return 'Preparing request...';
+}
+
+function formatModelWaitLabel(scope: {
+  shouldIncludeTabContext: boolean;
+  shouldIncludePageContext: boolean;
+  shouldIncludeSelection: boolean;
+}) {
+  if (scope.shouldIncludeTabContext) {
+    return 'Analyzing open tabs...';
+  }
+
+  if (scope.shouldIncludePageContext && scope.shouldIncludeSelection) {
+    return 'Analyzing page context...';
+  }
+
+  if (scope.shouldIncludePageContext) {
+    return 'Analyzing page context...';
+  }
+
+  if (scope.shouldIncludeSelection) {
+    return 'Analyzing selected text...';
+  }
+
+  return 'Analyzing request...';
+}
+
 function formatOperationLabel(tool: string) {
   switch (tool) {
     case 'searchWeb':
@@ -169,16 +289,53 @@ async function readBackgroundMessageOrNull<T extends RivBackgroundResponse>(
   request: Parameters<typeof sendBackgroundMessage>[0]
 ) {
   try {
-    return await sendBackgroundMessage<T>(request);
+    const scopedRequest = await withCurrentWindowScope(request);
+    return await sendBackgroundMessage<T>(scopedRequest);
   } catch (error) {
     console.error(error);
     return null;
   }
 }
 
+async function withCurrentWindowScope(
+  request: Parameters<typeof sendBackgroundMessage>[0]
+) {
+  switch (request.type) {
+    case 'riv/read-active-page':
+    case 'riv/read-selection':
+    case 'riv/list-tabs':
+    case 'riv/list-tab-groups':
+      break;
+    default:
+      return request;
+  }
+
+  if (typeof chrome === 'undefined' || !chrome.windows?.getCurrent) {
+    return request;
+  }
+
+  try {
+    const currentWindow = await chrome.windows.getCurrent();
+    if (typeof currentWindow.id !== 'number') {
+      return request;
+    }
+
+    return {
+      ...request,
+      windowId: currentWindow.id
+    };
+  } catch (error) {
+    console.error(error);
+    return request;
+  }
+}
+
 export default function App() {
   const conversationStore = getConversationStore();
   const [thread, setThread] = useState<ConversationThread | null>(null);
+  const [threads, setThreads] = useState<ConversationThread[]>([]);
+  const [threadSummaries, setThreadSummaries] = useState<ThreadSummaryMap>({});
+  const [pendingTasks, setPendingTasks] = useState<PendingTaskItem[]>([]);
   const [pageContext, setPageContext] = useState<PageContextSnapshot | null>(
     null
   );
@@ -191,16 +348,53 @@ export default function App() {
     string | null
   >(null);
 
+  async function refreshThreadCollections(
+    listedThreads?: ConversationThread[]
+  ) {
+    const nextThreads = listedThreads ?? await conversationStore.listThreads();
+    setThreads(nextThreads);
+    if (nextThreads.length === 0) {
+      setPendingTasks([]);
+      setThreadSummaries({});
+      return;
+    }
+
+    const details = await Promise.all(
+      nextThreads.map(async (item) => ({
+        threadId: item.id,
+        detail: await conversationStore.getThreadDetail(item.id)
+      }))
+    );
+    setPendingTasks(
+      collectPendingTasks(
+        details.map((item) => ({
+          threadId: item.threadId,
+          proposals: item.detail?.proposals ?? []
+        }))
+      )
+    );
+
+    const nextSummaries = details.reduce<ThreadSummaryMap>((acc, item) => {
+      const summary = toThreadSummary(item.detail?.messages ?? []);
+      if (summary) {
+        acc[item.threadId] = summary;
+      }
+      return acc;
+    }, {});
+    setThreadSummaries(nextSummaries);
+  }
+
   useEffect(() => {
     void (async () => {
-      const [snapshot, selection, localDetail] = await Promise.all([
+      const [snapshot, selection, localDetail, localThreads] = await Promise.all([
         readBackgroundMessageOrNull<PageContextSnapshot>({
           type: 'riv/read-active-page'
         }),
         readBackgroundMessageOrNull<SelectedTextContext | null>({
           type: 'riv/read-selection'
         }),
-        conversationStore.getLatestThreadDetail()
+        conversationStore.getLatestThreadDetail(),
+        conversationStore.listThreads()
       ]);
 
       if (snapshot) {
@@ -208,6 +402,8 @@ export default function App() {
       }
 
       setPreparedSelection((current) => current ?? selection);
+      setThreads(localThreads);
+      void refreshThreadCollections(localThreads);
 
       if (localDetail) {
         setThread(localDetail.thread);
@@ -250,8 +446,9 @@ export default function App() {
       return thread;
     }
 
-    const created = createLocalThread(pageContext?.title || 'Riv session');
+    const created = createLocalThread(pageContext?.title || 'Riva session');
     await conversationStore.upsertThread(created);
+    setThreads((current) => upsertThreadById(current, created));
     setThread(created);
     return created;
   }
@@ -266,40 +463,93 @@ export default function App() {
     } satisfies ConversationThread;
 
     await conversationStore.upsertThread(nextThread);
+    setThreads((current) => upsertThreadById(current, nextThread));
     setThread((current) =>
       current?.id === nextThread.id ? nextThread : current
     );
     return nextThread;
   }
 
+  async function handleCreateChat() {
+    const created = createLocalThread(pageContext?.title || 'New chat');
+    await conversationStore.upsertThread(created);
+    setThread(created);
+    setMessages([]);
+    setProposals([]);
+    setThreads((current) => upsertThreadById(current, created));
+  }
+
+  async function handleSelectThread(threadId: string) {
+    const localDetail = await conversationStore.getThreadDetail(threadId);
+
+    if (!localDetail) {
+      return;
+    }
+
+    setThread(localDetail.thread);
+    setMessages(localDetail.messages);
+    setProposals(localDetail.proposals);
+  }
+
+  async function handleDeleteThread(threadId: string) {
+    try {
+      await conversationStore.deleteThread(threadId);
+      const nextThreads = await conversationStore.listThreads();
+      await refreshThreadCollections(nextThreads);
+
+      if (thread?.id !== threadId) {
+        return;
+      }
+
+      const [nextThread] = nextThreads;
+      if (!nextThread) {
+        setThread(null);
+        setMessages([]);
+        setProposals([]);
+        return;
+      }
+
+      const nextDetail = await conversationStore.getThreadDetail(nextThread.id);
+      if (!nextDetail) {
+        setThread(nextThread);
+        setMessages([]);
+        setProposals([]);
+        return;
+      }
+
+      setThread(nextDetail.thread);
+      setMessages(nextDetail.messages);
+      setProposals(nextDetail.proposals);
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
   async function collectAttachments(
-    content: string,
-    recentMessages: ConversationMessage[]
+    scope: {
+      shouldIncludeTabContext: boolean;
+      shouldIncludePageContext: boolean;
+      shouldIncludeSelection: boolean;
+    }
   ) {
     const attachments: ContextAttachment[] = [];
-    const shouldIncludeTabContext = isTabManagementRequest(
-      content,
-      recentMessages
-    );
-    const shouldIncludePageContext = !shouldIncludeTabContext;
-    const shouldIncludeSelection = !shouldIncludeTabContext;
     const [latestPageContext, selection, tabs, tabGroups] = await Promise.all([
-      shouldIncludePageContext
+      scope.shouldIncludePageContext
         ? readBackgroundMessageOrNull<PageContextSnapshot>({
             type: 'riv/read-active-page'
           })
         : Promise.resolve(null),
-      shouldIncludeSelection
+      scope.shouldIncludeSelection
         ? readBackgroundMessageOrNull<SelectedTextContext | null>({
             type: 'riv/read-selection'
           })
         : Promise.resolve(null),
-      shouldIncludeTabContext
+      scope.shouldIncludeTabContext
         ? readBackgroundMessageOrNull<BrowserTabSummary[]>({
             type: 'riv/list-tabs'
           })
         : Promise.resolve(null),
-      shouldIncludeTabContext
+      scope.shouldIncludeTabContext
         ? readBackgroundMessageOrNull<BrowserTabGroupSummary[]>({
             type: 'riv/list-tab-groups'
           })
@@ -344,7 +594,7 @@ export default function App() {
 
   async function handleSend(content: string) {
     setIsSending(true);
-    setPendingOperationLabel('Preparing response...');
+    setPendingOperationLabel('Preparing request...');
 
     let activeThread: ConversationThread | null = null;
     let surfacedStreamError = false;
@@ -354,7 +604,10 @@ export default function App() {
       const localDetail = await conversationStore.getThreadDetail(activeThread.id);
       const priorMessages = localDetail?.messages ?? messages;
       const recentMessages = priorMessages.slice(-6);
-      const attachments = await collectAttachments(content, recentMessages);
+      const attachmentScope = getAttachmentScope(content, recentMessages);
+
+      setPendingOperationLabel(formatAttachmentReadLabel(attachmentScope));
+      const attachments = await collectAttachments(attachmentScope);
       const userMessage = createLocalMessage({
         id: `local-user-${Date.now()}`,
         threadId: activeThread.id,
@@ -369,6 +622,7 @@ export default function App() {
         attachments: stripTransientAttachments(userMessage.attachments)
       });
       activeThread = await touchThread(activeThread, userMessage.createdAt);
+      setPendingOperationLabel(formatModelWaitLabel(attachmentScope));
 
       const assistantMessageId = `local-assistant-${Date.now()}`;
       const assistantCreatedAt = new Date().toISOString();
@@ -402,15 +656,32 @@ export default function App() {
             break;
           }
           case 'tool_finished': {
-            setPendingOperationLabel('Preparing response...');
+            setPendingOperationLabel('Drafting response...');
             break;
           }
           case 'proposal_created': {
+            setPendingOperationLabel('Preparing action suggestion...');
             const { proposal } = envelope.payload;
 
             setProposals((current) => upsertById(current, proposal));
+            setPendingTasks((current) =>
+              [
+                ...current.filter((item) => item.proposalId !== proposal.id),
+                {
+                  proposalId: proposal.id,
+                  threadId: proposal.threadId,
+                  title: proposal.preview.title,
+                  summary: proposal.preview.summary,
+                  riskLevel: proposal.riskLevel,
+                  createdAt: proposal.createdAt
+                }
+              ].sort((left, right) =>
+                right.createdAt.localeCompare(left.createdAt)
+              )
+            );
             await conversationStore.upsertProposal(proposal);
             activeThread = await touchThread(activeThread, proposal.createdAt);
+            void refreshThreadCollections();
             void sendBackgroundMessage<ActionProposal>({
               type: 'riv/register-proposal',
               proposal
@@ -427,7 +698,7 @@ export default function App() {
                 id: `local-error-${Date.now()}`,
                 threadId: activeThread.id,
                 role: 'assistant',
-                content: `Riv couldn't complete that request: ${envelope.payload.message}`
+                content: `Riva couldn't complete that request: ${envelope.payload.message}`
               });
 
               setMessages((current) => [...current, errorMessage]);
@@ -459,7 +730,7 @@ export default function App() {
           id: `local-error-${Date.now()}`,
           threadId: activeThread.id,
           role: 'assistant',
-          content: `Riv couldn't complete that request: ${toErrorMessage(error)}`
+          content: `Riva couldn't complete that request: ${toErrorMessage(error)}`
         });
 
         setMessages((current) => [...current, errorMessage]);
@@ -469,6 +740,7 @@ export default function App() {
     } finally {
       setIsSending(false);
       setPendingOperationLabel(null);
+      void refreshThreadCollections();
     }
   }
 
@@ -504,7 +776,7 @@ export default function App() {
       });
 
       if (!result) {
-        throw new Error('Riv could not resolve that suggestion. Please try again.');
+        throw new Error('Riva could not resolve that suggestion. Please try again.');
       }
 
       const actionMessage = createLocalMessage({
@@ -519,34 +791,47 @@ export default function App() {
       setProposals((current) =>
         current.filter((item) => item.id !== proposalId)
       );
+      setPendingTasks((current) =>
+        current.filter((item) => item.proposalId !== proposalId)
+      );
       await conversationStore.removeProposal(activeThread.id, proposalId);
       await conversationStore.upsertMessage(actionMessage);
       activeThread = await touchThread(activeThread, actionMessage.createdAt);
+      void refreshThreadCollections();
     } catch (error) {
       console.error(error);
       const errorMessage = createLocalMessage({
         id: `local-error-${Date.now()}`,
         threadId: activeThread.id,
         role: 'assistant',
-        content: `Riv couldn't ${decision} that suggestion: ${toErrorMessage(error)}`
+        content: `Riva couldn't ${decision} that suggestion: ${toErrorMessage(error)}`
       });
 
       setMessages((current) => [...current, errorMessage]);
       await conversationStore.upsertMessage(errorMessage);
       await touchThread(activeThread, errorMessage.createdAt);
+    } finally {
+      void refreshThreadCollections();
     }
   }
 
   return (
     <RivSidepanel
-      threadTitle={thread?.title || pageContext?.title || 'Riv'}
+      activeThreadId={thread?.id ?? null}
+      onCreateChat={handleCreateChat}
+      onDeleteThread={handleDeleteThread}
+      onSelectThread={handleSelectThread}
+      threadTitle={thread?.title || pageContext?.title || 'Riva'}
       isSending={isSending}
       messages={messages}
       onResolveProposal={handleResolveProposal}
       onSend={handleSend}
       pendingOperationLabel={pendingOperationLabel}
+      pendingTasks={pendingTasks}
       preparedSelection={preparedSelection}
       proposals={proposals}
+      threadSummaries={threadSummaries}
+      threads={threads}
     />
   );
 }

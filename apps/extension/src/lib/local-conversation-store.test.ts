@@ -116,4 +116,49 @@ describe('createInMemoryConversationStore', () => {
       proposals: []
     });
   });
+
+  it('deletes a thread together with its messages and proposals', async () => {
+    const store = createInMemoryConversationStore();
+    const thread: ConversationThread = {
+      id: 'thread_delete',
+      userId: 'user_dev',
+      title: 'Delete me',
+      createdAt: '2026-03-29T13:00:00.000Z',
+      updatedAt: '2026-03-29T13:00:00.000Z'
+    };
+    const message: ConversationMessage = {
+      id: 'message_delete',
+      threadId: thread.id,
+      role: 'assistant',
+      content: 'This thread should be removed.',
+      attachments: [],
+      toolInvocations: [],
+      createdAt: '2026-03-29T13:01:00.000Z'
+    };
+    const proposal: ActionProposal = {
+      id: 'proposal_delete',
+      threadId: thread.id,
+      kind: 'focusTab',
+      reason: 'Cleanup',
+      preview: {
+        title: 'Remove tab',
+        summary: 'For deletion test',
+        items: ['example']
+      },
+      riskLevel: 'low',
+      requiresConfirmation: true,
+      payload: {
+        tabId: 4
+      },
+      createdAt: '2026-03-29T13:02:00.000Z'
+    };
+
+    await store.upsertThread(thread);
+    await store.upsertMessage(message);
+    await store.upsertProposal(proposal);
+    await store.deleteThread(thread.id);
+
+    await expect(store.getThreadDetail(thread.id)).resolves.toBeNull();
+    await expect(store.listThreads()).resolves.toEqual([]);
+  });
 });

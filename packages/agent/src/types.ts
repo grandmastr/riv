@@ -1,6 +1,7 @@
 import type {
   ActionConfirmation,
   ActionExecutionResult,
+  BrowserToolName,
   ActionProposal,
   ContextAttachment,
   ConversationMessage,
@@ -90,6 +91,26 @@ export type ModelGatewayStreamEvent =
   | {
       type: 'message_delta';
       delta: string;
+    }
+  | {
+      type: 'tool_started';
+      invocation: {
+        id: string;
+        tool: BrowserToolName;
+        kind: 'read' | 'write';
+        args: Record<string, unknown>;
+      };
+    }
+  | {
+      type: 'tool_finished';
+      invocation: {
+        id: string;
+        tool: BrowserToolName;
+        kind: 'read' | 'write';
+        args: Record<string, unknown>;
+        result?: unknown;
+        error?: string;
+      };
     }
   | {
       type: 'proposal';

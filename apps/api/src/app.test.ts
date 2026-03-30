@@ -475,4 +475,116 @@ describe('api app', () => {
       }
     ]);
   });
+
+  it('connects and disconnects Google integrations for dashboard automations', async () => {
+    const { app } = await createTestApp();
+
+    const beforeResponse = await app.request('/me/integrations/google');
+    expect(beforeResponse.status).toBe(200);
+    await expect(beforeResponse.json()).resolves.toMatchObject({
+      integration: {
+        provider: 'google',
+        status: 'disconnected',
+        calendarConnected: false,
+        gmailConnected: false
+      }
+    });
+
+    const connectResponse = await app.request('/me/integrations/google/connect', {
+      method: 'POST'
+    });
+    expect(connectResponse.status).toBe(200);
+    await expect(connectResponse.json()).resolves.toMatchObject({
+      integration: {
+        provider: 'google',
+        status: 'connected',
+        calendarConnected: true,
+        gmailConnected: true
+      }
+    });
+
+    const disconnectResponse = await app.request(
+      '/me/integrations/google/disconnect',
+      {
+        method: 'POST'
+      }
+    );
+    expect(disconnectResponse.status).toBe(200);
+    await expect(disconnectResponse.json()).resolves.toMatchObject({
+      integration: {
+        provider: 'google',
+        status: 'disconnected',
+        calendarConnected: false,
+        gmailConnected: false
+      }
+    });
+  });
+
+  it('returns proactive dashboard overview and automation details', async () => {
+    const { app } = await createTestApp();
+    await app.request('/me/integrations/google/connect', {
+      method: 'POST'
+    });
+
+    const overviewResponse = await app.request('/me/dashboard/overview');
+    expect(overviewResponse.status).toBe(200);
+    const overview = (await overviewResponse.json()) as {
+      meetings: Array<{ id: string }>;
+      reminders: Array<{ id: string; status: string }>;
+      gmailSuggestions: Array<{ id: string; status: string }>;
+    };
+    expect(overview.meetings.length).toBeGreaterThan(0);
+    expect(overview.reminders.length).toBeGreaterThan(0);
+    expect(overview.gmailSuggestions.length).toBeGreaterThan(0);
+    expect(overview.gmailSuggestions[0]?.status).toBe('new');
+
+    const automationsResponse = await app.request('/me/dashboard/automations');
+    expect(automationsResponse.status).toBe(200);
+    const automations = (await automationsResponse.json()) as {
+      automations: Array<{ key: string; enabled: boolean }>;
+      runLogs: Array<{ id: string; automationKey: string }>;
+      settings: { meetingReminderOffsetsMinutes: number[] };
+    };
+    expect(automations.automations.map((item) => item.key)).toContain(
+      'meeting-reminders'
+    );
+    expect(automations.runLogs.length).toBeGreaterThan(0);
+    expect(automations.settings.meetingReminderOffsetsMinutes).toEqual([
+      1440,
+      30
+    ]);
+
+    const updateResponse = await app.request('/me/dashboard/automation-settings', {
+      method: 'PATCH',
+      headers: {
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        meetingReminderOffsetsMinutes: [60, 15]
+      })
+    });
+    expect(updateResponse.status).toBe(200);
+    await expect(updateResponse.json()).resolves.toMatchObject({
+      settings: {
+        meetingReminderOffsetsMinutes: [60, 15]
+      }
+    });
+
+    const suggestionId = overview.gmailSuggestions[0]?.id;
+    expect(suggestionId).toBeDefined();
+
+    const dismissResponse = await app.request(
+      `/me/dashboard/suggestions/${suggestionId}/dismiss`,
+      {
+        method: 'POST'
+      }
+    );
+    expect(dismissResponse.status).toBe(200);
+    await expect(dismissResponse.json()).resolves.toMatchObject({
+      suggestion: {
+        id: suggestionId,
+        status: 'dismissed'
+      }
+    });
+  });
 });

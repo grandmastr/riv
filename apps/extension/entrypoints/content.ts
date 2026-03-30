@@ -5,7 +5,11 @@ import {
   extractSelectedTextContext
 } from '../src/content/extract-page-context';
 import { extractYouTubeMediaContextWithTranscript } from '../src/content/extract-youtube-context';
-import { syncPreparedSelection } from '../src/lib/messages';
+import { handleSidePanelShortcutKeydown } from '../src/content/shortcut-handler';
+import {
+  requestSidePanelToggle,
+  syncPreparedSelection
+} from '../src/lib/messages';
 
 export default defineContentScript({
   matches: ['http://*/*', 'https://*/*'],
@@ -50,6 +54,19 @@ export default defineContentScript({
     document.addEventListener('selectionchange', syncSelection);
     window.addEventListener('mouseup', syncSelection);
     window.addEventListener('keyup', syncSelection);
+    document.addEventListener(
+      'keydown',
+      (event) => {
+        handleSidePanelShortcutKeydown(event, () => {
+          void requestSidePanelToggle().catch((error: unknown) => {
+            console.error(error);
+          });
+        });
+      },
+      {
+        capture: true
+      }
+    );
 
     chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (message.type === 'riv/extract-page-context') {

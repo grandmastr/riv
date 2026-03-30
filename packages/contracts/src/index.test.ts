@@ -6,6 +6,9 @@ import {
   AssistantStreamEventSchema,
   BrowserTabSummarySchema,
   ContextAttachmentSchema,
+  DashboardAutomationsResponseSchema,
+  DashboardOverviewResponseSchema,
+  GoogleIntegrationStatusSchema,
   MessageEnvelopeSchema,
   PageContextSnapshotSchema
 } from './index';
@@ -311,6 +314,90 @@ describe('contracts', () => {
     if (attachment.kind === 'tabs') {
       expect(attachment.tabs[0]?.tabId).toBe(3);
     }
+  });
+
+  it('parses dashboard overview payloads with reminders and gmail suggestions', () => {
+    const payload = DashboardOverviewResponseSchema.parse({
+      meetings: [
+        {
+          id: 'meeting_1',
+          title: 'Weekly product sync',
+          startAt: '2026-03-31T09:00:00.000Z',
+          endAt: '2026-03-31T10:00:00.000Z',
+          attendees: ['alex@example.com'],
+          source: 'google-calendar'
+        }
+      ],
+      reminders: [
+        {
+          id: 'reminder_1',
+          meetingId: 'meeting_1',
+          triggerAt: '2026-03-31T08:30:00.000Z',
+          status: 'scheduled'
+        }
+      ],
+      gmailSuggestions: [
+        {
+          id: 'suggestion_1',
+          meetingId: 'meeting_1',
+          threadId: 'thread_99',
+          subject: 'Agenda for weekly product sync',
+          suggestion:
+            'Hi team, here are the updates I plan to cover in today’s sync...',
+          status: 'new',
+          matchSignals: ['participant-overlap', 'subject-similarity']
+        }
+      ]
+    });
+
+    expect(payload.meetings[0]?.source).toBe('google-calendar');
+    expect(payload.gmailSuggestions[0]?.status).toBe('new');
+  });
+
+  it('parses dashboard automations payloads with settings and run logs', () => {
+    const payload = DashboardAutomationsResponseSchema.parse({
+      automations: [
+        {
+          key: 'meeting-reminders',
+          name: 'Meeting reminders',
+          enabled: true,
+          status: 'healthy',
+          nextRunAt: '2026-03-30T15:00:00.000Z'
+        }
+      ],
+      runLogs: [
+        {
+          id: 'run_1',
+          automationKey: 'meeting-reminders',
+          status: 'success',
+          message: 'Scheduled reminders for 3 meetings.',
+          startedAt: '2026-03-30T14:00:00.000Z',
+          finishedAt: '2026-03-30T14:00:02.000Z'
+        }
+      ],
+      settings: {
+        meetingReminderOffsetsMinutes: [1440, 30],
+        enabledMeetingReminders: true,
+        enabledGmailSuggestions: true
+      }
+    });
+
+    expect(payload.settings.meetingReminderOffsetsMinutes).toEqual([1440, 30]);
+    expect(payload.runLogs[0]?.status).toBe('success');
+  });
+
+  it('parses Google integration connection status', () => {
+    const status = GoogleIntegrationStatusSchema.parse({
+      provider: 'google',
+      status: 'connected',
+      calendarConnected: true,
+      gmailConnected: true,
+      connectedAt: '2026-03-30T14:00:00.000Z',
+      scopes: ['calendar.readonly', 'gmail.readonly']
+    });
+
+    expect(status.provider).toBe('google');
+    expect(status.status).toBe('connected');
   });
 
   it('parses action proposals and rejects missing confirmation requirements', () => {

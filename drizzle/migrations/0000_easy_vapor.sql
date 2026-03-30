@@ -1,3 +1,27 @@
+DO $$ BEGIN
+ CREATE TYPE "action_kind" AS ENUM('groupTabs', 'moveTabs', 'closeTabs', 'focusTab');
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ CREATE TYPE "message_role" AS ENUM('user', 'assistant', 'tool', 'system');
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ CREATE TYPE "proposal_status" AS ENUM('pending', 'executed', 'rejected', 'failed');
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ CREATE TYPE "risk_level" AS ENUM('low', 'medium', 'high');
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
 CREATE TABLE "riv_action_proposals" (
 	"id" text PRIMARY KEY NOT NULL,
 	"thread_id" text NOT NULL,

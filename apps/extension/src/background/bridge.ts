@@ -38,9 +38,9 @@ type MoveTabsInput = {
 };
 
 export interface BackgroundBridgeBrowserApi {
-  getActiveTab(): Promise<BrowserTabLike | null>;
-  listTabs(): Promise<BrowserTabLike[]>;
-  listTabGroups(): Promise<BrowserTabGroupSummary[]>;
+  getActiveTab(windowId?: number): Promise<BrowserTabLike | null>;
+  listTabs(windowId?: number): Promise<BrowserTabLike[]>;
+  listTabGroups(windowId?: number): Promise<BrowserTabGroupSummary[]>;
   readPageContext(tabId?: number): Promise<PageContextSnapshot>;
   readSelection(tabId?: number): Promise<SelectedTextContext | null>;
   groupTabs(input: GroupTabsInput): Promise<BrowserTabGroupSummary>;
@@ -73,22 +73,170 @@ function mapTab(tab: BrowserTabLike): BrowserTabSummary {
     active: tab.active,
     pinned: tab.pinned,
     groupId: tab.groupId ?? -1,
-    favIconUrl: tab.favIconUrl
+    favIconUrl: toValidUrl(tab.favIconUrl)
   };
 }
 
+function toValidUrl(value: string | undefined) {
+  if (typeof value !== 'string' || value.length === 0) {
+    return undefined;
+  }
+
+  try {
+    return new URL(value).toString();
+  } catch {
+    return undefined;
+  }
+}
+
 function getPayloadTabIds(payload: Record<string, unknown>) {
+  const collected: number[] = [];
+
   if (Array.isArray(payload.tabIds)) {
-    return payload.tabIds.filter(
-      (value): value is number => typeof value === 'number'
+    collected.push(
+      ...payload.tabIds.filter(
+        (value): value is number => typeof value === 'number'
+      )
     );
   }
 
   if (typeof payload.tabId === 'number') {
-    return [payload.tabId];
+    collected.push(payload.tabId);
   }
 
-  return [];
+  if (Array.isArray(payload.groups)) {
+    for (const group of payload.groups) {
+      if (!group || typeof group !== 'object') {
+        continue;
+      }
+
+      const tabIds = (group as { tabIds?: unknown }).tabIds;
+
+      if (!Array.isArray(tabIds)) {
+        continue;
+      }
+
+      collected.push(
+        ...tabIds.filter(
+          (value): value is number => typeof value === 'number'
+        )
+      );
+    }
+  }
+
+  return [...new Set(collected)];
+}
+
+function isTabGroupColor(value: unknown): value is BrowserTabGroupSummary['color'] {
+  return (
+    value === 'grey' ||
+    value === 'blue' ||
+    value === 'red' ||
+    value === 'yellow' ||
+    value === 'green' ||
+    value === 'pink' ||
+    value === 'purple' ||
+    value === 'cyan' ||
+    value === 'orange'
+  );
+}
+
+function getPayloadGroups(payload: Record<string, unknown>): GroupTabsInput[] {
+  if (!Array.isArray(payload.groups)) {
+    return [];
+  }
+
+  const seenTabIds = new Set<number>();
+  const groups: GroupTabsInput[] = [];
+
+  for (const rawGroup of payload.groups) {
+    if (!rawGroup || typeof rawGroup !== 'object') {
+      continue;
+    }
+
+    const tabIds = (rawGroup as { tabIds?: unknown }).tabIds;
+
+    if (!Array.isArray(tabIds)) {
+      continue;
+    }
+
+    const normalizedTabIds = [...new Set(
+      tabIds.filter((value): value is number => typeof value === 'number')
+    )].filter((tabId) => !seenTabIds.has(tabId));
+
+    if (normalizedTabIds.length === 0) {
+      continue;
+    }
+
+    for (const tabId of normalizedTabIds) {
+      seenTabIds.add(tabId);
+    }
+
+    const title =
+      typeof (rawGroup as { title?: unknown }).title === 'string'
+        ? (rawGroup as { title: string }).title
+        : undefined;
+    const colorCandidate = (rawGroup as { color?: unknown }).color;
+    const color = isTabGroupColor(colorCandidate) ? colorCandidate : undefined;
+
+    groups.push({
+      tabIds: normalizedTabIds,
+      ...(title ? { title } : {}),
+      ...(color ? { color } : {})
+    });
+  }
+
+  return groups;
+}
+
+function buildGroupTabsSummary(groupCount: number) {
+  if (groupCount <= 1) {
+    return 'Grouped related tabs.';
+  }
+
+  return `Grouped tabs into ${groupCount} groups.`;
+}
+
+function buildRejectedGroupTabsSummary(groupCount: number) {
+  if (groupCount <= 1) {
+    return 'Rejected tab grouping.';
+  }
+
+  return `Rejected grouping into ${groupCount} groups.`;
+}
+
+function getSingleGroupInput(payload: Record<string, unknown>, tabIds: number[]) {
+  return {
+    tabIds,
+    title:
+      typeof payload.title === 'string'
+        ? payload.title
+        : undefined,
+    color: isTabGroupColor(payload.color)
+      ? payload.color
+      : undefined
+  } satisfies GroupTabsInput;
+}
+
+function getGroupCount(proposal: ActionProposal) {
+  const payloadGroups = getPayloadGroups(proposal.payload);
+  return payloadGroups.length > 0 ? payloadGroups.length : 1;
+}
+
+function getRejectedSummary(proposal: ActionProposal) {
+  if (proposal.kind !== 'groupTabs') {
+    return `Rejected ${proposal.kind}.`;
+  }
+
+  return buildRejectedGroupTabsSummary(getGroupCount(proposal));
+}
+
+function getExecutedSummary(proposal: ActionProposal) {
+  if (proposal.kind !== 'groupTabs') {
+    return `Executed ${proposal.kind}.`;
+  }
+
+  return buildGroupTabsSummary(getGroupCount(proposal));
 }
 
 export function createBackgroundBridge(
@@ -99,8 +247,8 @@ export function createBackgroundBridge(
   const randomId = options.randomId ?? (() => crypto.randomUUID());
   const proposals = new Map<string, ActionProposal>();
 
-  async function readActivePage() {
-    const activeTab = await api.getActiveTab();
+  async function readActivePage(windowId?: number) {
+    const activeTab = await api.getActiveTab(windowId);
 
     if (!activeTab?.id) {
       throw new Error('No active tab is available.');
@@ -109,8 +257,8 @@ export function createBackgroundBridge(
     return api.readPageContext(activeTab.id);
   }
 
-  async function readCurrentSelection() {
-    const activeTab = await api.getActiveTab();
+  async function readCurrentSelection(windowId?: number) {
+    const activeTab = await api.getActiveTab(windowId);
 
     if (!activeTab?.id) {
       return null;
@@ -119,13 +267,13 @@ export function createBackgroundBridge(
     return api.readSelection(activeTab.id);
   }
 
-  async function listTabs() {
-    const tabs = await api.listTabs();
+  async function listTabs(windowId?: number) {
+    const tabs = await api.listTabs(windowId);
     return tabs.map(mapTab);
   }
 
-  async function listTabGroups() {
-    return api.listTabGroups();
+  async function listTabGroups(windowId?: number) {
+    return api.listTabGroups(windowId);
   }
 
   function createProposal(input: ProposalInput) {
@@ -146,13 +294,20 @@ export function createBackgroundBridge(
   }
 
   async function confirmProposal(
-    confirmation: ActionConfirmation
+    confirmation: ActionConfirmation,
+    fallbackProposal?: ActionProposal
   ): Promise<ActionExecutionResult> {
-    const proposal = proposals.get(confirmation.proposalId);
+    const proposal =
+      proposals.get(confirmation.proposalId) ??
+      (fallbackProposal?.id === confirmation.proposalId
+        ? fallbackProposal
+        : undefined);
 
     if (!proposal) {
       throw new Error(`Proposal ${confirmation.proposalId} was not found.`);
     }
+
+    proposals.set(proposal.id, proposal);
 
     const executedAt = confirmation.confirmedAt || now();
     const tabIds = getPayloadTabIds(proposal.payload);
@@ -170,26 +325,26 @@ export function createBackgroundBridge(
       return {
         proposalId: proposal.id,
         status: 'rejected',
-        summary: `Rejected ${proposal.kind}.`,
+        summary: getRejectedSummary(proposal),
         affectedTabs,
         executedAt
       };
     }
 
     switch (proposal.kind) {
-      case 'groupTabs':
-        await api.groupTabs({
-          tabIds,
-          title:
-            typeof proposal.payload.title === 'string'
-              ? proposal.payload.title
-              : undefined,
-          color:
-            typeof proposal.payload.color === 'string'
-              ? (proposal.payload.color as BrowserTabGroupSummary['color'])
-              : undefined
-        });
+      case 'groupTabs': {
+        const groups = getPayloadGroups(proposal.payload);
+
+        if (groups.length > 0) {
+          for (const group of groups) {
+            await api.groupTabs(group);
+          }
+          break;
+        }
+
+        await api.groupTabs(getSingleGroupInput(proposal.payload, tabIds));
         break;
+      }
       case 'moveTabs':
         await api.moveTabs({
           tabIds,
@@ -231,7 +386,7 @@ export function createBackgroundBridge(
     return {
       proposalId: proposal.id,
       status: 'executed',
-      summary: `Executed ${proposal.kind}.`,
+      summary: getExecutedSummary(proposal),
       affectedTabs,
       executedAt
     };
@@ -242,17 +397,19 @@ export function createBackgroundBridge(
   ): Promise<RivBackgroundResponse> {
     switch (message.type) {
       case 'riv/read-active-page':
-        return readActivePage();
+        return readActivePage(message.windowId);
       case 'riv/read-selection':
-        return readCurrentSelection();
+        return readCurrentSelection(message.windowId);
       case 'riv/list-tabs':
-        return listTabs();
+        return listTabs(message.windowId);
       case 'riv/list-tab-groups':
-        return listTabGroups();
+        return listTabGroups(message.windowId);
       case 'riv/register-proposal':
         return registerProposal(message.proposal);
       case 'riv/confirm-proposal':
-        return confirmProposal(message.confirmation);
+        return confirmProposal(message.confirmation, message.proposal);
+      default:
+        throw new Error(`Unsupported background request: ${String(message)}`);
     }
   }
 

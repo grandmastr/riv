@@ -173,10 +173,10 @@ describe('sidepanel App', () => {
     const { default: App } = await import('../../entrypoints/sidepanel/App');
     render(<App />);
 
-    await screen.findByText('Riv docs');
+    await screen.findByText('Riv docs', { selector: '.riv-eyebrow' });
 
     fireEvent.change(
-      screen.getByPlaceholderText('Ask Riv about this page...'),
+      screen.getByPlaceholderText('Ask Riva about this page...'),
       {
         target: {
           value: 'Summarize this page'
@@ -258,10 +258,10 @@ describe('sidepanel App', () => {
     const { default: App } = await import('../../entrypoints/sidepanel/App');
     render(<App />);
 
-    await screen.findByText('Riv docs');
+    await screen.findByText('Riv docs', { selector: '.riv-eyebrow' });
 
     fireEvent.change(
-      screen.getByPlaceholderText('Ask Riv about this page...'),
+      screen.getByPlaceholderText('Ask Riva about this page...'),
       {
         target: {
           value: 'Stream without blocking'
@@ -304,7 +304,7 @@ describe('sidepanel App', () => {
     render(<App />);
 
     const composer = await screen.findByPlaceholderText(
-      'Ask Riv about this page...'
+      'Ask Riva about this page...'
     );
 
     fireEvent.keyDown(composer, {
@@ -339,7 +339,7 @@ describe('sidepanel App', () => {
     render(<App />);
 
     const composer = await screen.findByPlaceholderText(
-      'Ask Riv about this page...'
+      'Ask Riva about this page...'
     );
 
     expect(composer.getAttribute('autocapitalize')).toBe('sentences');
@@ -388,10 +388,10 @@ describe('sidepanel App', () => {
     const { default: App } = await import('../../entrypoints/sidepanel/App');
     render(<App />);
 
-    await screen.findByText('Riv docs');
+    await screen.findByText('Riv docs', { selector: '.riv-eyebrow' });
 
     fireEvent.change(
-      screen.getByPlaceholderText('Ask Riv about this page...'),
+      screen.getByPlaceholderText('Ask Riva about this page...'),
       {
         target: {
           value: 'Summarize this page'
@@ -401,7 +401,7 @@ describe('sidepanel App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
 
     await waitFor(() => {
-      expect(screen.getByText('Preparing response...')).toBeDefined();
+      expect(screen.getByText('Analyzing page context...')).toBeDefined();
     });
 
     releaseFirstDelta?.();
@@ -409,7 +409,7 @@ describe('sidepanel App', () => {
     await waitFor(() => {
       expect(screen.getByText('Working through the page now.')).toBeDefined();
     });
-    expect(screen.queryByText('Preparing response...')).toBeNull();
+    expect(screen.queryByText('Analyzing page context...')).toBeNull();
   });
 
   it('shows web-search status while the model is searching', async () => {
@@ -469,10 +469,10 @@ describe('sidepanel App', () => {
     const { default: App } = await import('../../entrypoints/sidepanel/App');
     render(<App />);
 
-    await screen.findByText('Riv docs');
+    await screen.findByText('Riv docs', { selector: '.riv-eyebrow' });
 
     fireEvent.change(
-      screen.getByPlaceholderText('Ask Riv about this page...'),
+      screen.getByPlaceholderText('Ask Riva about this page...'),
       {
         target: {
           value: 'Find alternatives'
@@ -543,14 +543,14 @@ describe('sidepanel App', () => {
     const { default: App } = await import('../../entrypoints/sidepanel/App');
     render(<App />);
 
-    await screen.findByText('Riv docs');
+    await screen.findByText('Riv docs', { selector: '.riv-eyebrow' });
     expect(screen.queryByText('Selection ready')).toBeNull();
     expect(
       screen.getByText('Use this highlighted passage in the answer.')
     ).toBeDefined();
 
     fireEvent.change(
-      screen.getByPlaceholderText('Ask Riv about this page...'),
+      screen.getByPlaceholderText('Ask Riva about this page...'),
       {
         target: {
           value: 'Answer using the prepared selection'
@@ -558,7 +558,7 @@ describe('sidepanel App', () => {
       }
     );
     fireEvent.keyDown(
-      screen.getByPlaceholderText('Ask Riv about this page...'),
+      screen.getByPlaceholderText('Ask Riva about this page...'),
       {
         key: 'Enter'
       }
@@ -635,10 +635,10 @@ describe('sidepanel App', () => {
     const { default: App } = await import('../../entrypoints/sidepanel/App');
     render(<App />);
 
-    await screen.findByText('Riv docs');
+    await screen.findByText('Riv docs', { selector: '.riv-eyebrow' });
 
     fireEvent.change(
-      screen.getByPlaceholderText('Ask Riv about this page...'),
+      screen.getByPlaceholderText('Ask Riva about this page...'),
       {
         target: {
           value: 'What changed on this page?'
@@ -724,11 +724,11 @@ describe('sidepanel App', () => {
     const { default: App } = await import('../../entrypoints/sidepanel/App');
     render(<App />);
 
-    await screen.findByText('Riv docs');
+    await screen.findByText('Riv docs', { selector: '.riv-eyebrow' });
     await screen.findByText('Old highlighted text.');
 
     fireEvent.change(
-      screen.getByPlaceholderText('Ask Riv about this page...'),
+      screen.getByPlaceholderText('Ask Riva about this page...'),
       {
         target: {
           value: 'Use the current selection'
@@ -794,10 +794,10 @@ describe('sidepanel App', () => {
     const { default: App } = await import('../../entrypoints/sidepanel/App');
     render(<App />);
 
-    await screen.findByText('Riv docs');
+    await screen.findByText('Riv docs', { selector: '.riv-eyebrow' });
 
     fireEvent.change(
-      screen.getByPlaceholderText('Ask Riv about this page...'),
+      screen.getByPlaceholderText('Ask Riva about this page...'),
       {
         target: {
           value: 'Just answer'
@@ -857,10 +857,10 @@ describe('sidepanel App', () => {
     const { default: App } = await import('../../entrypoints/sidepanel/App');
     render(<App />);
 
-    await screen.findByText('Riv docs');
+    await screen.findByText('Riv docs', { selector: '.riv-eyebrow' });
 
     fireEvent.change(
-      screen.getByPlaceholderText('Ask Riv about this page...'),
+      screen.getByPlaceholderText('Ask Riva about this page...'),
       {
         target: {
           value: 'Why no answer?'
@@ -870,7 +870,7 @@ describe('sidepanel App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
 
     await screen.findByText(
-      "Riv couldn't complete that request: Failed to fetch"
+      "Riva couldn't complete that request: Failed to fetch"
     );
   });
 
@@ -949,7 +949,7 @@ describe('sidepanel App', () => {
     render(<App />);
 
     await screen.findByText('Recovered locally persisted answer.');
-    expect(screen.getByText('Focus the API reference tab')).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'Focus the API reference tab' })).toBeDefined();
     expect(sendStatelessTurnMock).not.toHaveBeenCalled();
   });
 
@@ -995,10 +995,10 @@ describe('sidepanel App', () => {
     const { default: App } = await import('../../entrypoints/sidepanel/App');
     render(<App />);
 
-    await screen.findByText('Riv docs');
+    await screen.findByText('Riv docs', { selector: '.riv-eyebrow' });
 
     fireEvent.change(
-      screen.getByPlaceholderText('Ask Riv about this page...'),
+      screen.getByPlaceholderText('Ask Riva about this page...'),
       {
         target: {
           value: 'Persist this exchange'
@@ -1074,10 +1074,10 @@ describe('sidepanel App', () => {
     const { default: App } = await import('../../entrypoints/sidepanel/App');
     render(<App />);
 
-    await screen.findByText('Riv docs');
+    await screen.findByText('Riv docs', { selector: '.riv-eyebrow' });
 
     fireEvent.change(
-      screen.getByPlaceholderText('Ask Riv about this page...'),
+      screen.getByPlaceholderText('Ask Riva about this page...'),
       {
         target: {
           value: 'Group the browser tabs'
@@ -1174,10 +1174,10 @@ describe('sidepanel App', () => {
     const { default: App } = await import('../../entrypoints/sidepanel/App');
     render(<App />);
 
-    await screen.findByText('Riv docs');
+    await screen.findByText('Riv docs', { selector: '.riv-eyebrow' });
 
     fireEvent.change(
-      screen.getByPlaceholderText('Ask Riv about this page...'),
+      screen.getByPlaceholderText('Ask Riva about this page...'),
       {
         target: {
           value: 'Looks good, group them'
@@ -1269,10 +1269,10 @@ describe('sidepanel App', () => {
     const { default: App } = await import('../../entrypoints/sidepanel/App');
     render(<App />);
 
-    await screen.findByText('Riv docs');
+    await screen.findByText('Riv docs', { selector: '.riv-eyebrow' });
 
     fireEvent.change(
-      screen.getByPlaceholderText('Ask Riv about this page...'),
+      screen.getByPlaceholderText('Ask Riva about this page...'),
       {
         target: {
           value: 'Group the browser tabs'
@@ -1359,10 +1359,10 @@ describe('sidepanel App', () => {
     const { default: App } = await import('../../entrypoints/sidepanel/App');
     render(<App />);
 
-    await screen.findByText('Riv docs');
+    await screen.findByText('Riv docs', { selector: '.riv-eyebrow' });
 
     fireEvent.change(
-      screen.getByPlaceholderText('Ask Riv about this page...'),
+      screen.getByPlaceholderText('Ask Riva about this page...'),
       {
         target: {
           value: 'Take the best next action'
@@ -1371,7 +1371,7 @@ describe('sidepanel App', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
 
-    await screen.findByText('Focus the documentation tab');
+    await screen.findByRole('heading', { name: 'Focus the documentation tab' });
 
     let detail = await conversationStore.getLatestThreadDetail();
     expect(detail?.proposals).toHaveLength(1);
@@ -1468,10 +1468,10 @@ describe('sidepanel App', () => {
     const { default: App } = await import('../../entrypoints/sidepanel/App');
     render(<App />);
 
-    await screen.findByText('Riv docs');
+    await screen.findByText('Riv docs', { selector: '.riv-eyebrow' });
 
     fireEvent.change(
-      screen.getByPlaceholderText('Ask Riv about this page...'),
+      screen.getByPlaceholderText('Ask Riva about this page...'),
       {
         target: {
           value: 'Take the best next action'
@@ -1480,12 +1480,87 @@ describe('sidepanel App', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
 
-    await screen.findByText('Focus the documentation tab');
+    await screen.findByRole('heading', { name: 'Focus the documentation tab' });
 
     fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
 
     await screen.findByText(
-      "Riv couldn't confirm that suggestion: Riv could not resolve that suggestion. Please try again."
+      "Riva couldn't confirm that suggestion: Riva could not resolve that suggestion. Please try again."
     );
+  });
+
+  it('supports creating new chats and switching between existing chats', async () => {
+    const olderThread: ConversationThread = {
+      id: 'thread_older',
+      userId: 'user_dev',
+      title: 'Older thread',
+      createdAt: NOW,
+      updatedAt: NOW
+    };
+    const newerThread: ConversationThread = {
+      id: 'thread_newer',
+      userId: 'user_dev',
+      title: 'Newer thread',
+      createdAt: NOW,
+      updatedAt: '2026-03-29T15:10:00.000Z'
+    };
+    const olderMessage: ConversationMessage = {
+      id: 'message_older',
+      threadId: olderThread.id,
+      role: 'assistant',
+      content: 'Older thread content.',
+      attachments: [],
+      toolInvocations: [],
+      createdAt: NOW
+    };
+    const newerMessage: ConversationMessage = {
+      id: 'message_newer',
+      threadId: newerThread.id,
+      role: 'assistant',
+      content: 'Newer thread content.',
+      attachments: [],
+      toolInvocations: [],
+      createdAt: '2026-03-29T15:10:00.000Z'
+    };
+
+    sendBackgroundMessageMock.mockImplementation(
+      async (message: { type: string }) => {
+        if (message.type === 'riv/read-active-page') {
+          return pageSnapshot;
+        }
+
+        if (message.type === 'riv/read-selection') {
+          return null;
+        }
+
+        return null;
+      }
+    );
+    subscribeToPreparedSelectionMock.mockReturnValue(() => undefined);
+    await conversationStore.upsertThread(olderThread);
+    await conversationStore.upsertThread(newerThread);
+    await conversationStore.upsertMessage(olderMessage);
+    await conversationStore.upsertMessage(newerMessage);
+    sendStatelessTurnMock.mockReturnValue(
+      (async function* () {
+        // no-op stream
+      })()
+    );
+
+    const { default: App } = await import('../../entrypoints/sidepanel/App');
+    render(<App />);
+
+    await screen.findByText('Newer thread content.');
+    expect(screen.queryByText('Older thread content.')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open chats' }));
+    await screen.findByRole('dialog', { name: 'Chats' });
+    fireEvent.click(screen.getByRole('button', { name: /^Older thread/ }));
+    await screen.findByText('Older thread content.');
+
+    fireEvent.click(screen.getByRole('button', { name: 'New chat' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open chats' }));
+    await screen.findByRole('button', { name: 'Riv docs' });
   });
 });

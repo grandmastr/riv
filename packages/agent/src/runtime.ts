@@ -5,7 +5,8 @@ import {
   type ContextAttachment,
   type ConversationMessage,
   type ConversationThread,
-  type MessageEnvelope
+  type MessageEnvelope,
+  type ToolInvocation
 } from '@riv/contracts';
 
 import { AgentRuntimeError } from './errors';
@@ -399,6 +400,7 @@ export class AgentRuntime {
   }): AsyncGenerator<MessageEnvelope, string> {
     const memories = await this.memories.listByUserId(input.userId);
     let assistantResponse = '';
+    const activeToolInvocations = new Map<string, ToolInvocation>();
 
     for await (const event of this.modelGateway.streamTurn({
       thread: input.thread,
@@ -416,6 +418,54 @@ export class AgentRuntime {
             delta: event.delta
           },
           this.now()
+        );
+        continue;
+      }
+
+      if (event.type === 'tool_started') {
+        const startedAt = this.now();
+        const invocation: ToolInvocation = {
+          id: event.invocation.id,
+          tool: event.invocation.tool,
+          kind: event.invocation.kind,
+          state: 'started',
+          args: event.invocation.args,
+          createdAt: startedAt
+        };
+        activeToolInvocations.set(invocation.id, invocation);
+
+        yield createEnvelope(
+          {
+            type: 'tool_started',
+            invocation
+          },
+          startedAt
+        );
+        continue;
+      }
+
+      if (event.type === 'tool_finished') {
+        const completedAt = this.now();
+        const startedInvocation = activeToolInvocations.get(event.invocation.id);
+        const invocation: ToolInvocation = {
+          id: event.invocation.id,
+          tool: event.invocation.tool,
+          kind: event.invocation.kind,
+          state: event.invocation.error ? 'failed' : 'completed',
+          args: startedInvocation?.args ?? event.invocation.args,
+          result: event.invocation.result,
+          error: event.invocation.error,
+          createdAt: startedInvocation?.createdAt ?? completedAt,
+          completedAt
+        };
+        activeToolInvocations.delete(event.invocation.id);
+
+        yield createEnvelope(
+          {
+            type: 'tool_finished',
+            invocation
+          },
+          completedAt
         );
         continue;
       }

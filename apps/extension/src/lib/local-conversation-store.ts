@@ -14,6 +14,7 @@ export interface LocalConversationStore {
   listThreads(): Promise<ConversationThread[]>;
   getLatestThreadDetail(): Promise<LocalThreadDetail | null>;
   getThreadDetail(threadId: string): Promise<LocalThreadDetail | null>;
+  deleteThread(threadId: string): Promise<void>;
   upsertThread(thread: ConversationThread): Promise<void>;
   upsertMessage(message: ConversationMessage): Promise<void>;
   upsertProposal(proposal: ActionProposal): Promise<void>;
@@ -121,6 +122,11 @@ export function createInMemoryConversationStore(): LocalConversationStore {
     },
     async upsertThread(thread) {
       threads.set(thread.id, thread);
+    },
+    async deleteThread(threadId) {
+      threads.delete(threadId);
+      messages.delete(threadId);
+      proposals.delete(threadId);
     },
     async upsertMessage(message) {
       const existing = messages.get(message.threadId) ?? [];
@@ -266,6 +272,39 @@ export function createIndexedDbConversationStore(
     },
     async upsertThread(thread) {
       await putRecord(THREADS_STORE, thread);
+    },
+    async deleteThread(threadId) {
+      const database = await openDatabase();
+      const transaction = database.transaction(
+        [THREADS_STORE, MESSAGES_STORE, PROPOSALS_STORE],
+        'readwrite'
+      );
+      const threadsStore = transaction.objectStore(THREADS_STORE);
+      const messagesStore = transaction.objectStore(MESSAGES_STORE);
+      const proposalsStore = transaction.objectStore(PROPOSALS_STORE);
+
+      threadsStore.delete(threadId);
+
+      const messageKeysRequest = messagesStore
+        .index(THREAD_ID_INDEX)
+        .getAllKeys(IDBKeyRange.only(threadId));
+      const proposalKeysRequest = proposalsStore
+        .index(THREAD_ID_INDEX)
+        .getAllKeys(IDBKeyRange.only(threadId));
+
+      const [messageKeys, proposalKeys] = await Promise.all([
+        requestToPromise(messageKeysRequest as IDBRequest<IDBValidKey[]>),
+        requestToPromise(proposalKeysRequest as IDBRequest<IDBValidKey[]>)
+      ]);
+
+      messageKeys.forEach((key) => {
+        messagesStore.delete(key);
+      });
+      proposalKeys.forEach((key) => {
+        proposalsStore.delete(key);
+      });
+
+      await transactionDone(transaction);
     },
     async upsertMessage(message) {
       await putRecord(MESSAGES_STORE, message);

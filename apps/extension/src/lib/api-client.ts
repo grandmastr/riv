@@ -7,7 +7,7 @@ import {
   type MessageEnvelope
 } from '@riv/contracts';
 
-const DEFAULT_API_URL = 'http://localhost:3000';
+const DEFAULT_API_URL = 'http://localhost:8787';
 const DEFAULT_VIEWER_ID = 'user_dev';
 
 function getApiBaseUrl() {
@@ -104,7 +104,7 @@ export async function createThread(title: string) {
     throw new Error(
       await readErrorMessage(
         response,
-        `Unable to create a Riv thread (${response.status}).`
+        `Unable to create a Riva thread (${response.status}).`
       )
     );
   }
@@ -134,7 +134,7 @@ export async function* sendMessage(
     throw new Error(
       await readErrorMessage(
         response,
-        `Riv could not send the message (${response.status}).`
+        `Riva could not send the message (${response.status}).`
       )
     );
   }
@@ -173,7 +173,7 @@ export async function* sendStatelessTurn(input: {
     throw new Error(
       await readErrorMessage(
         response,
-        `Riv could not process the turn (${response.status}).`
+        `Riva could not process the turn (${response.status}).`
       )
     );
   }
@@ -210,7 +210,7 @@ export async function resolveProposal(
     throw new Error(
       await readErrorMessage(
         response,
-        `Riv could not ${endpoint} the proposal (${response.status}).`
+        `Riva could not ${endpoint} the proposal (${response.status}).`
       )
     );
   }
