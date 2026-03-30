@@ -6,6 +6,41 @@ const IsoDateTimeSchema = z.iso.datetime();
 const UrlSchema = z.url();
 const JsonRecordSchema = z.record(z.string(), z.string());
 
+export const YouTubeTranscriptCueSchema = z.object({
+  timestampLabel: z.string().min(1),
+  startSeconds: z.number().nonnegative().optional(),
+  text: z.string().min(1)
+});
+
+export const YouTubeChapterSchema = z.object({
+  title: z.string().min(1),
+  timestampLabel: z.string().min(1).optional(),
+  startSeconds: z.number().nonnegative().optional()
+});
+
+export const YouTubeMediaContextSchema = z.object({
+  kind: z.literal('youtube-video'),
+  videoId: z.string().min(1),
+  channelName: z.string().min(1).optional(),
+  description: z.string().min(1).optional(),
+  chapters: z.array(YouTubeChapterSchema),
+  transcript: z.array(YouTubeTranscriptCueSchema),
+  transcriptStatus: z.enum([
+    'available',
+    'unavailable',
+    'not-requested',
+    'failed'
+  ]),
+  transcriptFailureReason: z
+    .enum([
+      'button-missing',
+      'panel-open-failed',
+      'panel-timeout',
+      'parse-failed'
+    ])
+    .optional()
+});
+
 export const BrowserToolNameSchema = z.enum([
   'readActivePage',
   'readSelection',
@@ -40,7 +75,8 @@ export const PageContextSnapshotSchema = z.object({
   ]),
   capturedAt: IsoDateTimeSchema,
   metadata: JsonRecordSchema,
-  contentBlocks: z.array(ContentBlockSchema)
+  contentBlocks: z.array(ContentBlockSchema),
+  media: YouTubeMediaContextSchema.optional()
 });
 
 export const SelectedTextContextSchema = z.object({
@@ -213,6 +249,9 @@ export const MessageEnvelopeSchema = z.object({
 
 export type BrowserToolName = z.infer<typeof BrowserToolNameSchema>;
 export type ContentBlock = z.infer<typeof ContentBlockSchema>;
+export type YouTubeTranscriptCue = z.infer<typeof YouTubeTranscriptCueSchema>;
+export type YouTubeChapter = z.infer<typeof YouTubeChapterSchema>;
+export type YouTubeMediaContext = z.infer<typeof YouTubeMediaContextSchema>;
 export type PageContextSnapshot = z.infer<typeof PageContextSnapshotSchema>;
 export type SelectedTextContext = z.infer<typeof SelectedTextContextSchema>;
 export type BrowserTabSummary = z.infer<typeof BrowserTabSummarySchema>;
