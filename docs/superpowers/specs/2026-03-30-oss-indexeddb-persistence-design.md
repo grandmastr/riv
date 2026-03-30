@@ -87,18 +87,27 @@ This preserves privacy and avoids bloating local history with stale page state.
 
 ### Data model
 
-The contract shapes should remain aligned across OSS and paid modes.
+The contract shapes should remain aligned across OSS and paid modes at the core entity level.
 
-The same core entities should exist in both:
+The same shared core entities should exist in both:
 
 - `ConversationThread`
 - `ConversationMessage`
 - `ActionProposal`
 - `MemoryRecord`
 
-The difference is repository location, not entity shape.
+The primary difference should be repository location, not the meaning of those core entities.
 
-That keeps the UI and agent-facing types stable while allowing different persistence backends.
+However, OSS mode is allowed to add local-only persistence metadata needed for local-first UX, for example:
+
+- pending or failed assistant turn state
+- temporary client-generated IDs before a completed assistant record is finalized
+- retry markers for failed turn processing
+- local sync bookkeeping that never becomes part of the shared contract
+
+That distinction matters because OSS mode writes locally before inference completes, while paid mode can rely more heavily on server-owned completion flow.
+
+This keeps the user-facing data model and shared contracts stable while allowing mode-specific storage metadata where needed.
 
 ## OSS Turn Flow
 
@@ -118,6 +127,26 @@ In OSS mode, the extension owns the local conversation lifecycle.
 6. Persist the completed assistant message locally.
 7. Persist any returned action proposals locally.
 
+### OSS turn response contract
+
+The OSS boundary between extension and backend must be explicit, because the extension owns persistence in this mode.
+
+The backend response should remain stream-compatible with the current UI contract and include:
+
+- assistant text delta events
+- proposal-created events with full proposal payloads
+- error events with user-displayable error text
+
+The extension should not depend on a backend-owned final stored assistant message record in OSS mode.
+
+Instead:
+
+- the extension assembles the streamed assistant text into a local assistant message
+- the extension persists proposals locally as proposal-created events arrive
+- the extension treats stream completion as the signal that the assembled assistant message can be finalized locally
+
+If request correlation is needed for local bookkeeping, the extension may generate a local turn/request id, but that id should remain OSS-local metadata unless promoted into a shared contract later.
+
 ### Read flow
 
 When the sidepanel loads in OSS mode, it should read threads, messages, proposals, and memories from `IndexedDB`, not from backend thread endpoints.
@@ -130,6 +159,7 @@ If the backend inference request fails:
 - do not lose the thread
 - surface the backend error in UI
 - do not create a fake assistant message unless product UX explicitly wants one
+- preserve any local pending/failed turn metadata needed for retry affordances without polluting shared core entities
 
 ## Backend Contract Changes
 
@@ -148,6 +178,8 @@ At minimum, the backend needs:
 - transient attachments
 
 The backend does not need to persist those records in OSS mode.
+
+In OSS mode, the backend should be treated as a stateless turn processor for durable conversation history, even if other backend concerns still exist.
 
 ## Extension Storage Design
 
@@ -188,6 +220,14 @@ For the OSS milestone:
 - new local conversations should write to `IndexedDB`
 - existing in-memory-only behavior becomes a dev/test fallback, not product storage
 - no Postgres requirement remains for local persistence
+
+User-visible migration posture for existing in-memory OSS sessions:
+
+- do not promise migration of already-open in-memory threads from older builds
+- treat prior in-memory session state as non-durable and non-migratable
+- once the IndexedDB-backed build is in place, newly created or subsequently loaded OSS conversations persist locally
+
+This is acceptable because the current in-memory OSS behavior is already ephemeral. The migration goal is to stop future loss, not reconstruct already-lost transient state.
 
 Future migration to paid sync can map local entities to server-backed entities because the data model stays aligned.
 
