@@ -18,28 +18,50 @@ export const YouTubeChapterSchema = z.object({
   startSeconds: z.number().nonnegative().optional()
 });
 
-export const YouTubeMediaContextSchema = z.object({
+const YouTubeTranscriptFailureReasonSchema = z.enum([
+  'button-missing',
+  'panel-open-failed',
+  'panel-timeout',
+  'parse-failed'
+]);
+
+const YouTubeMediaContextBaseSchema = z.object({
   kind: z.literal('youtube-video'),
   videoId: z.string().min(1),
   channelName: z.string().min(1).optional(),
   description: z.string().min(1).optional(),
-  chapters: z.array(YouTubeChapterSchema),
-  transcript: z.array(YouTubeTranscriptCueSchema),
-  transcriptStatus: z.enum([
-    'available',
-    'unavailable',
-    'not-requested',
-    'failed'
-  ]),
-  transcriptFailureReason: z
-    .enum([
-      'button-missing',
-      'panel-open-failed',
-      'panel-timeout',
-      'parse-failed'
-    ])
-    .optional()
+  chapters: z.array(YouTubeChapterSchema)
 });
+
+export const YouTubeMediaContextSchema = z.discriminatedUnion(
+  'transcriptStatus',
+  [
+    YouTubeMediaContextBaseSchema.extend({
+      transcriptStatus: z.literal('available'),
+      transcript: z.array(YouTubeTranscriptCueSchema).min(1),
+      transcriptFailureReason: z.never().optional()
+    }),
+    YouTubeMediaContextBaseSchema.extend({
+      transcriptStatus: z.literal('unavailable'),
+      transcript: z.array(YouTubeTranscriptCueSchema).length(0),
+      transcriptFailureReason: YouTubeTranscriptFailureReasonSchema.optional()
+    }),
+    YouTubeMediaContextBaseSchema.extend({
+      transcriptStatus: z.literal('not-requested'),
+      transcript: z.array(YouTubeTranscriptCueSchema).length(0),
+      transcriptFailureReason: z.never().optional()
+    }),
+    YouTubeMediaContextBaseSchema.extend({
+      transcriptStatus: z.literal('failed'),
+      transcript: z.array(YouTubeTranscriptCueSchema).length(0),
+      transcriptFailureReason: YouTubeTranscriptFailureReasonSchema
+    })
+  ]
+);
+
+export type YouTubeMediaTranscriptStatus = z.infer<
+  typeof YouTubeMediaContextSchema
+>['transcriptStatus'];
 
 export const BrowserToolNameSchema = z.enum([
   'readActivePage',

@@ -11,6 +11,111 @@ import {
 } from './index';
 
 describe('contracts', () => {
+  it('rejects available YouTube transcript states with a failure reason', () => {
+    expect(() =>
+      PageContextSnapshotSchema.parse({
+        tabId: 12,
+        url: 'https://www.youtube.com/watch?v=abc123',
+        title: 'Example video',
+        pageType: 'generic',
+        capturedAt: '2026-03-29T15:00:00.000Z',
+        metadata: {},
+        contentBlocks: [],
+        media: {
+          kind: 'youtube-video',
+          videoId: 'abc123',
+          chapters: [],
+          transcript: [
+            {
+              timestampLabel: '0:32',
+              startSeconds: 32,
+              text: 'The speaker introduces the main claim.'
+            }
+          ],
+          transcriptStatus: 'available',
+          transcriptFailureReason: 'button-missing'
+        }
+      })
+    ).toThrow();
+  });
+
+  it('rejects unavailable YouTube transcript states with transcript cues', () => {
+    expect(() =>
+      PageContextSnapshotSchema.parse({
+        tabId: 12,
+        url: 'https://www.youtube.com/watch?v=abc123',
+        title: 'Example video',
+        pageType: 'generic',
+        capturedAt: '2026-03-29T15:00:00.000Z',
+        metadata: {},
+        contentBlocks: [],
+        media: {
+          kind: 'youtube-video',
+          videoId: 'abc123',
+          chapters: [],
+          transcript: [
+            {
+              timestampLabel: '0:32',
+              startSeconds: 32,
+              text: 'The speaker introduces the main claim.'
+            }
+          ],
+          transcriptStatus: 'unavailable',
+          transcriptFailureReason: 'button-missing'
+        }
+      })
+    ).toThrow();
+  });
+
+  it('rejects failed YouTube transcript states with transcript cues', () => {
+    expect(() =>
+      PageContextSnapshotSchema.parse({
+        tabId: 12,
+        url: 'https://www.youtube.com/watch?v=abc123',
+        title: 'Example video',
+        pageType: 'generic',
+        capturedAt: '2026-03-29T15:00:00.000Z',
+        metadata: {},
+        contentBlocks: [],
+        media: {
+          kind: 'youtube-video',
+          videoId: 'abc123',
+          chapters: [],
+          transcript: [
+            {
+              timestampLabel: '0:32',
+              startSeconds: 32,
+              text: 'The speaker introduces the main claim.'
+            }
+          ],
+          transcriptStatus: 'failed',
+          transcriptFailureReason: 'parse-failed'
+        }
+      })
+    ).toThrow();
+  });
+
+  it('rejects available YouTube transcript states with no transcript evidence', () => {
+    expect(() =>
+      PageContextSnapshotSchema.parse({
+        tabId: 12,
+        url: 'https://www.youtube.com/watch?v=abc123',
+        title: 'Example video',
+        pageType: 'generic',
+        capturedAt: '2026-03-29T15:00:00.000Z',
+        metadata: {},
+        contentBlocks: [],
+        media: {
+          kind: 'youtube-video',
+          videoId: 'abc123',
+          chapters: [],
+          transcript: [],
+          transcriptStatus: 'available'
+        }
+      })
+    ).toThrow();
+  });
+
   it('retains optional YouTube media context on parsed page snapshots', () => {
     expect(
       PageContextSnapshotSchema.parse({
@@ -33,7 +138,13 @@ describe('contracts', () => {
               startSeconds: 0
             }
           ],
-          transcript: [],
+          transcript: [
+            {
+              timestampLabel: '0:32',
+              startSeconds: 32,
+              text: 'The speaker introduces the main claim.'
+            }
+          ],
           transcriptStatus: 'available'
         }
       })
@@ -50,7 +161,13 @@ describe('contracts', () => {
             startSeconds: 0
           }
         ],
-        transcript: [],
+        transcript: [
+          {
+            timestampLabel: '0:32',
+            startSeconds: 32,
+            text: 'The speaker introduces the main claim.'
+          }
+        ],
         transcriptStatus: 'available'
       }
     });
