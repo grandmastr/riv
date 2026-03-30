@@ -4,6 +4,7 @@ import {
   extractPageContextSnapshot,
   extractSelectedTextContext
 } from '../src/content/extract-page-context';
+import { extractYouTubeMediaContextWithTranscript } from '../src/content/extract-youtube-context';
 import { syncPreparedSelection } from '../src/lib/messages';
 
 export default defineContentScript({
@@ -52,16 +53,36 @@ export default defineContentScript({
 
     chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (message.type === 'riv/extract-page-context') {
-        sendResponse(
-          extractPageContextSnapshot({
-            tabId: message.tabId ?? 0,
-            url: window.location.href,
-            title: document.title,
-            document,
-            capturedAt: new Date().toISOString()
+        const input = {
+          tabId: message.tabId ?? 0,
+          url: window.location.href,
+          title: document.title,
+          document,
+          capturedAt: new Date().toISOString()
+        };
+        const snapshot = extractPageContextSnapshot(input);
+
+        if (
+          snapshot.media?.kind !== 'youtube-video' ||
+          snapshot.media.transcriptStatus !== 'not-requested'
+        ) {
+          sendResponse(snapshot);
+          return false;
+        }
+
+        void extractYouTubeMediaContextWithTranscript(document, window.location.href)
+          .then((media) => {
+            sendResponse({
+              ...snapshot,
+              media: media ?? undefined
+            });
           })
-        );
-        return false;
+          .catch((error: unknown) => {
+            console.error(error);
+            sendResponse(snapshot);
+          });
+
+        return true;
       }
 
       if (message.type === 'riv/extract-selection') {

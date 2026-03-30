@@ -6,6 +6,13 @@ import type {
 
 const MAX_TRANSCRIPT_CUES = 150;
 const MAX_TRANSCRIPT_CHARACTERS = 12000;
+const DEFAULT_TRANSCRIPT_TIMEOUT_MS = 1500;
+const DEFAULT_TRANSCRIPT_POLL_INTERVAL_MS = 50;
+
+type ExtractYouTubeMediaContextWithTranscriptOptions = {
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+};
 
 function parseUrl(url: string) {
   try {
@@ -248,6 +255,147 @@ function getTranscriptRows(document: Document) {
   );
 }
 
+function getTranscriptPanel(document: Document) {
+  return document.querySelector<HTMLElement>(
+    [
+      'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"]',
+      '[target-id="engagement-panel-searchable-transcript"]',
+      '[data-transcript-panel]'
+    ].join(', ')
+  );
+}
+
+function isElementHidden(element: HTMLElement) {
+  return (
+    element.hidden ||
+    element.getAttribute('aria-hidden') === 'true' ||
+    element.getAttribute('visibility') === 'ENGAGEMENT_PANEL_VISIBILITY_HIDDEN'
+  );
+}
+
+function isTranscriptPanelOpen(document: Document) {
+  const panel = getTranscriptPanel(document);
+
+  return Boolean(panel && !isElementHidden(panel));
+}
+
+function getTranscriptButtonLabel(element: Element) {
+  return normalizeText(
+    element.getAttribute('aria-label') ??
+      element.getAttribute('title') ??
+      element.textContent
+  ).toLowerCase();
+}
+
+function getTranscriptOpenButton(document: Document) {
+  const candidates = Array.from(
+    document.querySelectorAll<HTMLElement>(
+      [
+        'button[aria-label*="transcript" i]',
+        'button[title*="transcript" i]',
+        '[aria-label*="transcript" i][role="button"]',
+        'ytd-video-description-transcript-section-renderer'
+      ].join(', ')
+    )
+  );
+
+  return (
+    candidates.find((candidate) => {
+      if (
+        candidate.matches('ytd-video-description-transcript-section-renderer')
+      ) {
+        return true;
+      }
+
+      const label = getTranscriptButtonLabel(candidate);
+
+      return Boolean(label) && !label.includes('close');
+    }) ?? null
+  );
+}
+
+function getTranscriptCloseButton(document: Document) {
+  const panel = getTranscriptPanel(document);
+
+  if (!panel) {
+    return null;
+  }
+
+  return (
+    panel.querySelector<HTMLElement>(
+      [
+        'button[aria-label*="close transcript" i]',
+        'button[title*="close transcript" i]',
+        '[aria-label*="close transcript" i][role="button"]',
+        'button[aria-label*="close" i]',
+        '[aria-label*="close" i][role="button"]'
+      ].join(', ')
+    ) ?? null
+  );
+}
+
+function hasDisabledState(element: Element) {
+  return (
+    ('disabled' in element &&
+      typeof element.disabled === 'boolean' &&
+      element.disabled) ||
+    element.getAttribute('aria-disabled') === 'true'
+  );
+}
+
+function clickElement(element: HTMLElement) {
+  if (hasDisabledState(element)) {
+    return false;
+  }
+
+  try {
+    element.click();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function wait(durationMs: number) {
+  return new Promise<void>((resolve) => {
+    window.setTimeout(resolve, durationMs);
+  });
+}
+
+async function waitForTranscriptRows(
+  document: Document,
+  options: Required<ExtractYouTubeMediaContextWithTranscriptOptions>
+) {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt <= options.timeoutMs) {
+    const rows = getTranscriptRows(document);
+
+    if (rows.length > 0) {
+      return rows;
+    }
+
+    await wait(options.pollIntervalMs);
+  }
+
+  return [];
+}
+
+function buildTranscriptFailureResult(
+  media: YouTubeMediaContext,
+  transcriptFailureReason: Extract<
+    YouTubeMediaContext,
+    { transcriptStatus: 'failed' }
+  >['transcriptFailureReason']
+): YouTubeMediaContext {
+  return {
+    ...media,
+    transcript: [],
+    transcriptStatus: 'failed',
+    transcriptFailureReason
+  };
+}
+
 export function normalizeTranscriptCues(rows: HTMLElement[]) {
   const cues: YouTubeTranscriptCue[] = [];
 
@@ -317,13 +465,9 @@ export function truncateTranscript(cues: YouTubeTranscriptCue[]) {
 }
 
 function hasTranscriptButton(document: Document) {
-  return document.querySelector(
-    [
-      'button[aria-label*="transcript" i]',
-      'button[title*="transcript" i]',
-      '[aria-label*="transcript" i][role="button"]',
-      'ytd-video-description-transcript-section-renderer'
-    ].join(', ')
+  return (
+    getTranscriptOpenButton(document) ??
+    document.querySelector('ytd-video-description-transcript-section-renderer')
   );
 }
 
@@ -402,4 +546,68 @@ export function extractYouTubeMediaContext(
     transcript: [],
     transcriptFailureReason: 'button-missing'
   };
+}
+
+export async function extractYouTubeMediaContextWithTranscript(
+  document: Document,
+  url: string,
+  options?: ExtractYouTubeMediaContextWithTranscriptOptions
+): Promise<YouTubeMediaContext | null> {
+  const media = extractYouTubeMediaContext(document, url);
+
+  if (!media || media.transcriptStatus !== 'not-requested') {
+    return media;
+  }
+
+  const resolvedOptions = {
+    timeoutMs: options?.timeoutMs ?? DEFAULT_TRANSCRIPT_TIMEOUT_MS,
+    pollIntervalMs:
+      options?.pollIntervalMs ?? DEFAULT_TRANSCRIPT_POLL_INTERVAL_MS
+  };
+  const panelWasOpen = isTranscriptPanelOpen(document);
+  let openedByExtension = false;
+
+  try {
+    if (!panelWasOpen) {
+      const transcriptButton = getTranscriptOpenButton(document);
+
+      if (!transcriptButton || !clickElement(transcriptButton)) {
+        return buildTranscriptFailureResult(media, 'panel-open-failed');
+      }
+
+      openedByExtension = true;
+    }
+
+    const transcriptRows = await waitForTranscriptRows(document, resolvedOptions);
+
+    if (transcriptRows.length === 0) {
+      return buildTranscriptFailureResult(media, 'panel-timeout');
+    }
+
+    const transcript = truncateTranscript(normalizeTranscriptCues(transcriptRows));
+
+    if (transcript.length === 0) {
+      return buildTranscriptFailureResult(media, 'parse-failed');
+    }
+
+    return {
+      ...media,
+      transcriptStatus: 'available',
+      transcript
+    };
+  } finally {
+    if (openedByExtension) {
+      const closeButton = getTranscriptCloseButton(document);
+
+      if (closeButton) {
+        clickElement(closeButton);
+      } else {
+        const transcriptButton = getTranscriptOpenButton(document);
+
+        if (transcriptButton) {
+          clickElement(transcriptButton);
+        }
+      }
+    }
+  }
 }
