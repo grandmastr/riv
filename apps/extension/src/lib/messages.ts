@@ -11,12 +11,17 @@ import type {
 import type { PreparedSelectionSyncPayload } from '../background/prepared-selection-store';
 
 export type RivBackgroundRequest =
-  | { type: 'riv/read-active-page' }
-  | { type: 'riv/read-selection' }
-  | { type: 'riv/list-tabs' }
-  | { type: 'riv/list-tab-groups' }
+  | { type: 'riv/read-active-page'; windowId?: number }
+  | { type: 'riv/read-selection'; windowId?: number }
+  | { type: 'riv/list-tabs'; windowId?: number }
+  | { type: 'riv/list-tab-groups'; windowId?: number }
+  | { type: 'riv/toggle-sidepanel'; windowId?: number }
   | { type: 'riv/register-proposal'; proposal: ActionProposal }
-  | { type: 'riv/confirm-proposal'; confirmation: ActionConfirmation };
+  | {
+      type: 'riv/confirm-proposal';
+      confirmation: ActionConfirmation;
+      proposal?: ActionProposal;
+    };
 
 export type RivSelectionSyncMessage = {
   type: 'riv/selection-sync';
@@ -50,6 +55,12 @@ export async function syncPreparedSelection(
     type: 'riv/selection-sync',
     selection
   } satisfies RivSelectionSyncMessage);
+}
+
+export async function requestSidePanelToggle() {
+  return chrome.runtime.sendMessage({
+    type: 'riv/toggle-sidepanel'
+  } satisfies RivBackgroundRequest);
 }
 
 export function subscribeToPreparedSelection(

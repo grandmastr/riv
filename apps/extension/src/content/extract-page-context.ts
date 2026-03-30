@@ -4,6 +4,8 @@ import type {
   SelectedTextContext
 } from '@riv/contracts';
 
+import { extractYouTubeMediaContext } from './extract-youtube-context';
+
 type ExtractPageContextInput = {
   tabId: number;
   url: string;
@@ -155,6 +157,8 @@ function collectContentBlocks(document: Document) {
 export function extractPageContextSnapshot(
   input: ExtractPageContextInput
 ): PageContextSnapshot {
+  const media = extractYouTubeMediaContext(input.document, input.url);
+
   return {
     tabId: input.tabId,
     url: input.url,
@@ -162,7 +166,8 @@ export function extractPageContextSnapshot(
     pageType: inferPageType(input.url, input.document),
     capturedAt: input.capturedAt,
     metadata: extractMetadata(input.document),
-    contentBlocks: collectContentBlocks(input.document)
+    contentBlocks: collectContentBlocks(input.document),
+    media: media ?? undefined
   };
 }
 

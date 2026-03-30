@@ -55,11 +55,18 @@ function queryTabs(queryInfo: { [key: string]: unknown }) {
   return chrome.tabs.query(queryInfo);
 }
 
-async function getActiveTab() {
-  const [tab] = await queryTabs({
-    active: true,
-    lastFocusedWindow: true
-  });
+async function getActiveTab(windowId?: number) {
+  const queryInfo =
+    typeof windowId === 'number'
+      ? {
+          active: true,
+          windowId
+        }
+      : {
+          active: true,
+          lastFocusedWindow: true
+        };
+  const [tab] = await queryTabs(queryInfo);
 
   return tab ?? null;
 }
@@ -68,11 +75,27 @@ function queryTabGroups() {
   return chrome.tabGroups.query({});
 }
 
-async function getActiveWindowId() {
+async function listCurrentWindowTabs(windowId?: number) {
+  const resolvedWindowId = await getActiveWindowId(windowId);
+  return queryTabs({ windowId: resolvedWindowId });
+}
+
+async function listCurrentWindowTabGroups(windowId?: number) {
+  const resolvedWindowId = await getActiveWindowId(windowId);
+  const groups = await queryTabGroups();
+
+  return groups.filter((group) => group.windowId === resolvedWindowId);
+}
+
+async function getActiveWindowId(windowId?: number) {
+  if (typeof windowId === 'number') {
+    return windowId;
+  }
+
   const tab = await getActiveTab();
 
   if (typeof tab?.windowId !== 'number') {
-    throw new Error('Riv could not determine the active browser window.');
+    throw new Error('Riva could not determine the active browser window.');
   }
 
   return tab.windowId;
@@ -146,11 +169,11 @@ const preparedSelectionStore = createPreparedSelectionStore({
 const bridge = createBackgroundBridge(
   {
     getActiveTab,
-    async listTabs() {
-      return queryTabs({});
+    async listTabs(windowId) {
+      return listCurrentWindowTabs(windowId);
     },
-    async listTabGroups() {
-      const groups = await queryTabGroups();
+    async listTabGroups(windowId) {
+      const groups = await listCurrentWindowTabGroups(windowId);
 
       return groups.map((group) => ({
         groupId: group.id,
@@ -214,8 +237,8 @@ const bridge = createBackgroundBridge(
   }
 );
 
-async function readPreparedSelection() {
-  const activeTab = await getActiveTab();
+async function readPreparedSelection(windowId?: number) {
+  const activeTab = await getActiveTab(windowId);
 
   if (typeof activeTab?.id !== 'number') {
     return null;
@@ -225,7 +248,7 @@ async function readPreparedSelection() {
     return preparedSelectionStore.getForTab(activeTab.id);
   }
 
-  return bridge.readCurrentSelection();
+  return bridge.readCurrentSelection(windowId);
 }
 
 const sidePanelController = createSidePanelController({
@@ -256,17 +279,19 @@ const sidePanelController = createSidePanelController({
 async function handleMessage(message: RivBackgroundRequest) {
   switch (message.type) {
     case 'riv/read-active-page':
-      return bridge.readActivePage();
+      return bridge.readActivePage(message.windowId);
     case 'riv/read-selection':
-      return readPreparedSelection();
+      return readPreparedSelection(message.windowId);
     case 'riv/list-tabs':
-      return bridge.listTabs();
+      return bridge.listTabs(message.windowId);
     case 'riv/list-tab-groups':
-      return bridge.listTabGroups();
+      return bridge.listTabGroups(message.windowId);
+    case 'riv/toggle-sidepanel':
+      return sidePanelController.toggleCurrentWindow();
     case 'riv/register-proposal':
       return bridge.registerProposal(message.proposal);
     case 'riv/confirm-proposal':
-      return bridge.confirmProposal(message.confirmation);
+      return bridge.confirmProposal(message.confirmation, message.proposal);
   }
 }
 

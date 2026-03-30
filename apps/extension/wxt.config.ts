@@ -3,19 +3,24 @@ import path from 'node:path';
 import { defineConfig } from 'wxt';
 
 export default defineConfig({
+  dev: {
+    server: {
+      port: 3001
+    }
+  },
   manifest: {
-    name: 'Riv',
+    name: 'Riva',
     description: 'A page-aware browser copilot with chat and tab intelligence.',
     action: {
-      default_title: 'Open Riv'
+      default_title: 'Open Riva'
     },
     commands: {
       'toggle-riv-sidepanel': {
         suggested_key: {
           default: 'Ctrl+Shift+Y',
-          mac: 'Command+J'
+          mac: 'Command+Shift+Y'
         },
-        description: 'Open or close the Riv side panel'
+        description: 'Open or close the Riva side panel'
       }
     },
     permissions: [

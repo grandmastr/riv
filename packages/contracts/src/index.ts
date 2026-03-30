@@ -6,11 +6,144 @@ const IsoDateTimeSchema = z.iso.datetime();
 const UrlSchema = z.url();
 const JsonRecordSchema = z.record(z.string(), z.string());
 
+export const YouTubeTranscriptCueSchema = z.object({
+  timestampLabel: z.string().min(1),
+  startSeconds: z.number().nonnegative().optional(),
+  text: z.string().min(1)
+});
+
+export const YouTubeChapterSchema = z.object({
+  title: z.string().min(1),
+  timestampLabel: z.string().min(1).optional(),
+  startSeconds: z.number().nonnegative().optional()
+});
+
+const YouTubeTranscriptFailureReasonSchema = z.enum([
+  'button-missing',
+  'panel-open-failed',
+  'panel-timeout',
+  'parse-failed'
+]);
+
+const YouTubeMediaContextBaseSchema = z.object({
+  kind: z.literal('youtube-video'),
+  videoId: z.string().min(1),
+  channelName: z.string().min(1).optional(),
+  description: z.string().min(1).optional(),
+  chapters: z.array(YouTubeChapterSchema)
+});
+
+export const YouTubeMediaContextSchema = z.discriminatedUnion(
+  'transcriptStatus',
+  [
+    YouTubeMediaContextBaseSchema.extend({
+      transcriptStatus: z.literal('available'),
+      transcript: z.array(YouTubeTranscriptCueSchema).min(1),
+      transcriptFailureReason: z.never().optional()
+    }),
+    YouTubeMediaContextBaseSchema.extend({
+      transcriptStatus: z.literal('unavailable'),
+      transcript: z.array(YouTubeTranscriptCueSchema).length(0),
+      transcriptFailureReason: YouTubeTranscriptFailureReasonSchema.optional()
+    }),
+    YouTubeMediaContextBaseSchema.extend({
+      transcriptStatus: z.literal('not-requested'),
+      transcript: z.array(YouTubeTranscriptCueSchema).length(0),
+      transcriptFailureReason: z.never().optional()
+    }),
+    YouTubeMediaContextBaseSchema.extend({
+      transcriptStatus: z.literal('failed'),
+      transcript: z.array(YouTubeTranscriptCueSchema).length(0),
+      transcriptFailureReason: YouTubeTranscriptFailureReasonSchema
+    })
+  ]
+);
+
+export const GoogleIntegrationStatusSchema = z.object({
+  provider: z.literal('google'),
+  status: z.enum(['connected', 'disconnected', 'partial']),
+  calendarConnected: z.boolean(),
+  gmailConnected: z.boolean(),
+  connectedAt: IsoDateTimeSchema.optional(),
+  scopes: z.array(z.string().min(1)).default([])
+});
+
+export const DashboardMeetingSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  startAt: IsoDateTimeSchema,
+  endAt: IsoDateTimeSchema,
+  attendees: z.array(z.string().min(1)),
+  location: z.string().min(1).optional(),
+  meetingUrl: UrlSchema.optional(),
+  source: z.literal('google-calendar')
+});
+
+export const MeetingReminderSchema = z.object({
+  id: z.string().min(1),
+  meetingId: z.string().min(1),
+  triggerAt: IsoDateTimeSchema,
+  status: z.enum(['scheduled', 'sent', 'dismissed'])
+});
+
+export const GmailReplySuggestionSchema = z.object({
+  id: z.string().min(1),
+  meetingId: z.string().min(1),
+  threadId: z.string().min(1),
+  subject: z.string().min(1),
+  suggestion: z.string().min(1),
+  status: z.enum(['new', 'dismissed', 'accepted']),
+  matchSignals: z.array(
+    z.enum(['participant-overlap', 'subject-similarity'])
+  )
+});
+
+export const DashboardOverviewResponseSchema = z.object({
+  meetings: z.array(DashboardMeetingSchema),
+  reminders: z.array(MeetingReminderSchema),
+  gmailSuggestions: z.array(GmailReplySuggestionSchema)
+});
+
+export const AutomationSettingsSchema = z.object({
+  meetingReminderOffsetsMinutes: z.array(z.number().int().positive()).min(1),
+  enabledMeetingReminders: z.boolean(),
+  enabledGmailSuggestions: z.boolean()
+});
+
+export const AutomationSummarySchema = z.object({
+  key: z.enum(['meeting-reminders', 'gmail-reply-suggestions']),
+  name: z.string().min(1),
+  enabled: z.boolean(),
+  status: z.enum(['healthy', 'degraded']),
+  lastRunAt: IsoDateTimeSchema.optional(),
+  nextRunAt: IsoDateTimeSchema.optional()
+});
+
+export const AutomationRunLogSchema = z.object({
+  id: z.string().min(1),
+  automationKey: z.enum(['meeting-reminders', 'gmail-reply-suggestions']),
+  status: z.enum(['success', 'failed']),
+  message: z.string().min(1),
+  startedAt: IsoDateTimeSchema,
+  finishedAt: IsoDateTimeSchema.optional()
+});
+
+export const DashboardAutomationsResponseSchema = z.object({
+  automations: z.array(AutomationSummarySchema),
+  runLogs: z.array(AutomationRunLogSchema),
+  settings: AutomationSettingsSchema
+});
+
+export type YouTubeMediaTranscriptStatus = z.infer<
+  typeof YouTubeMediaContextSchema
+>['transcriptStatus'];
+
 export const BrowserToolNameSchema = z.enum([
   'readActivePage',
   'readSelection',
   'listTabs',
   'listTabGroups',
+  'searchWeb',
   'proposeTabGrouping',
   'groupTabs',
   'moveTabs',
@@ -40,7 +173,8 @@ export const PageContextSnapshotSchema = z.object({
   ]),
   capturedAt: IsoDateTimeSchema,
   metadata: JsonRecordSchema,
-  contentBlocks: z.array(ContentBlockSchema)
+  contentBlocks: z.array(ContentBlockSchema),
+  media: YouTubeMediaContextSchema.optional()
 });
 
 export const SelectedTextContextSchema = z.object({
@@ -213,6 +347,24 @@ export const MessageEnvelopeSchema = z.object({
 
 export type BrowserToolName = z.infer<typeof BrowserToolNameSchema>;
 export type ContentBlock = z.infer<typeof ContentBlockSchema>;
+export type YouTubeTranscriptCue = z.infer<typeof YouTubeTranscriptCueSchema>;
+export type YouTubeChapter = z.infer<typeof YouTubeChapterSchema>;
+export type YouTubeMediaContext = z.infer<typeof YouTubeMediaContextSchema>;
+export type GoogleIntegrationStatus = z.infer<
+  typeof GoogleIntegrationStatusSchema
+>;
+export type DashboardMeeting = z.infer<typeof DashboardMeetingSchema>;
+export type MeetingReminder = z.infer<typeof MeetingReminderSchema>;
+export type GmailReplySuggestion = z.infer<typeof GmailReplySuggestionSchema>;
+export type DashboardOverviewResponse = z.infer<
+  typeof DashboardOverviewResponseSchema
+>;
+export type AutomationSettings = z.infer<typeof AutomationSettingsSchema>;
+export type AutomationSummary = z.infer<typeof AutomationSummarySchema>;
+export type AutomationRunLog = z.infer<typeof AutomationRunLogSchema>;
+export type DashboardAutomationsResponse = z.infer<
+  typeof DashboardAutomationsResponseSchema
+>;
 export type PageContextSnapshot = z.infer<typeof PageContextSnapshotSchema>;
 export type SelectedTextContext = z.infer<typeof SelectedTextContextSchema>;
 export type BrowserTabSummary = z.infer<typeof BrowserTabSummarySchema>;

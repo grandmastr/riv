@@ -1,9 +1,16 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor
+} from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type {
   ActionProposal,
   ConversationMessage,
+  ConversationThread,
   ContextAttachment,
   SelectedTextContext
 } from '@riv/contracts';
@@ -51,6 +58,46 @@ const selectionAttachment: ContextAttachment = {
   }
 };
 
+const tabsAttachment: ContextAttachment = {
+  kind: 'tabs',
+  tabs: [
+    {
+      tabId: 7,
+      windowId: 1,
+      index: 0,
+      url: 'https://docs.riv.dev',
+      title: 'Riv docs',
+      active: true,
+      pinned: false,
+      groupId: -1
+    },
+    {
+      tabId: 8,
+      windowId: 1,
+      index: 1,
+      url: 'https://github.com/riv',
+      title: 'Riv repo',
+      active: false,
+      pinned: false,
+      groupId: -1
+    }
+  ]
+};
+
+const tabGroupsAttachment: ContextAttachment = {
+  kind: 'tabGroups',
+  tabGroups: [
+    {
+      groupId: 12,
+      windowId: 1,
+      title: 'Riv work',
+      color: 'blue',
+      collapsed: false,
+      tabIds: [7, 8]
+    }
+  ]
+};
+
 const messages: ConversationMessage[] = [
   {
     id: 'message_1',
@@ -81,6 +128,23 @@ const proposals: ActionProposal[] = [
       title: 'Riv'
     },
     createdAt: NOW
+  }
+];
+
+const threads: ConversationThread[] = [
+  {
+    id: 'thread_1',
+    userId: 'user_dev',
+    title: 'Riv workspace',
+    createdAt: NOW,
+    updatedAt: NOW
+  },
+  {
+    id: 'thread_2',
+    userId: 'user_dev',
+    title: 'Shopping list',
+    createdAt: NOW,
+    updatedAt: '2026-03-29T15:01:00.000Z'
   }
 ];
 
@@ -120,8 +184,8 @@ describe('RivSidepanel', () => {
         'I reviewed the current page and I can group related tabs.'
       )
     ).toBeDefined();
-    expect(screen.getByText('page')).toBeDefined();
-    expect(screen.getByText('documentation')).toBeDefined();
+    expect(screen.queryByText('page')).toBeNull();
+    expect(screen.queryByText('documentation')).toBeNull();
     expect(screen.getByText('Group Riv tabs')).toBeDefined();
     expect(
       screen.getByText(
@@ -144,7 +208,7 @@ describe('RivSidepanel', () => {
     );
 
     fireEvent.change(
-      screen.getByPlaceholderText('Ask Riv about this page...'),
+      screen.getByPlaceholderText('Ask Riva about this page...'),
       {
         target: {
           value: 'Summarize the current tab'
@@ -190,6 +254,60 @@ describe('RivSidepanel', () => {
     expect(screen.getByText('Second point')).toBeDefined();
   });
 
+  it('renders chats and current tasks with working actions', () => {
+    const onCreateChat = vi.fn();
+    const onDeleteThread = vi.fn();
+    const onSelectThread = vi.fn();
+
+    render(
+      <RivSidepanel
+        activeThreadId="thread_1"
+        isSending={false}
+        messages={messages}
+        onCreateChat={onCreateChat}
+        onDeleteThread={onDeleteThread}
+        onResolveProposal={vi.fn()}
+        onSelectThread={onSelectThread}
+        onSend={vi.fn()}
+        pendingTasks={[
+          {
+            proposalId: 'proposal_1',
+            threadId: 'thread_1',
+            title: 'Group Riv tabs',
+            summary: 'Collect the current research tabs into one group.',
+            riskLevel: 'low',
+            createdAt: NOW
+          }
+        ]}
+        preparedSelection={null}
+        proposals={proposals}
+        threadTitle="Riv workspace"
+        threadSummaries={{
+          thread_1: 'Current work summary',
+          thread_2: 'Shopping summary'
+        }}
+        threads={threads}
+      />
+    );
+
+    expect(screen.getByRole('button', { name: 'Open chats' })).toBeDefined();
+    expect(screen.queryByText('Current tasks')).toBeNull();
+    expect(screen.queryByText('No open tasks.')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'New chat' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open chats' }));
+    expect(screen.getByRole('dialog', { name: 'Chats' })).toBeDefined();
+    expect(screen.getByText('Shopping summary')).toBeDefined();
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Shopping list' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Shopping list/ }));
+    expect(screen.queryByRole('dialog', { name: 'Chats' })).toBeNull();
+
+    expect(onCreateChat).toHaveBeenCalledTimes(1);
+    expect(onDeleteThread).toHaveBeenCalledWith('thread_2');
+    expect(onSelectThread).toHaveBeenCalledTimes(1);
+    expect(onSelectThread).toHaveBeenCalledWith('thread_2');
+  });
+
   it('does not render the old empty-state prompt line', () => {
     render(
       <RivSidepanel
@@ -211,7 +329,7 @@ describe('RivSidepanel', () => {
     ).toBeNull();
   });
 
-  it('shows a Claude-style thinking row while waiting on the first assistant reply', () => {
+  it('shows an operation-status row while waiting on the first assistant reply', () => {
     const { container } = render(
       <RivSidepanel
         threadTitle="Riv workspace"
@@ -234,11 +352,11 @@ describe('RivSidepanel', () => {
       />
     );
 
-    expect(screen.getByText('Riv is thinking')).toBeDefined();
+    expect(screen.getByText('Working...')).toBeDefined();
     expect(container.querySelectorAll('.riv-thinking-dot')).toHaveLength(3);
   });
 
-  it('hides page-derived pills inside user bubbles while keeping direct context labels', () => {
+  it('hides all attachment pills inside user bubbles', () => {
     const { container } = render(
       <RivSidepanel
         threadTitle="Riv workspace"
@@ -248,7 +366,12 @@ describe('RivSidepanel', () => {
             threadId: 'thread_1',
             role: 'user',
             content: 'Use this selected text.',
-            attachments: [formPageAttachment, selectionAttachment],
+            attachments: [
+              formPageAttachment,
+              selectionAttachment,
+              tabsAttachment,
+              tabGroupsAttachment
+            ],
             toolInvocations: [],
             createdAt: NOW
           }
@@ -261,9 +384,12 @@ describe('RivSidepanel', () => {
       />
     );
 
-    expect(screen.getByText('selection')).toBeDefined();
+    expect(screen.queryByText('selection')).toBeNull();
     expect(screen.queryByText('page')).toBeNull();
     expect(screen.queryByText('form')).toBeNull();
+    expect(screen.queryByText('tabs')).toBeNull();
+    expect(screen.queryByText('2 tabs')).toBeNull();
+    expect(screen.queryByText('tab groups')).toBeNull();
     expect(container.querySelector('.riv-scroll-aura-top')).toBeTruthy();
     expect(container.querySelector('.riv-scroll-aura-bottom')).toBeTruthy();
   });
@@ -284,7 +410,7 @@ describe('RivSidepanel', () => {
     );
 
     const composer = screen.getByPlaceholderText(
-      'Ask Riv about this page...'
+      'Ask Riva about this page...'
     ) as HTMLTextAreaElement;
     expect(composer.rows).toBe(2);
     fireEvent.change(composer, {
@@ -298,6 +424,34 @@ describe('RivSidepanel', () => {
     });
 
     expect(onSend).toHaveBeenCalledWith('Use the selected article as context');
+  });
+
+  it('capitalizes sentence starts in the composer as text changes', () => {
+    render(
+      <RivSidepanel
+        threadTitle="Riv workspace"
+        messages={messages}
+        proposals={[]}
+        preparedSelection={null}
+        isSending={false}
+        onSend={vi.fn()}
+        onResolveProposal={vi.fn()}
+      />
+    );
+
+    const composer = screen.getByPlaceholderText(
+      'Ask Riva about this page...'
+    ) as HTMLTextAreaElement;
+
+    fireEvent.change(composer, {
+      target: {
+        value: 'hello. how are you?\nthis should also capitalize.'
+      }
+    });
+
+    expect(composer.value).toBe(
+      'Hello. How are you?\nThis should also capitalize.'
+    );
   });
 
   it('uses an icon-style send control with an accessible label', () => {
@@ -358,7 +512,7 @@ describe('RivSidepanel', () => {
       />
     );
 
-    const composer = screen.getByPlaceholderText('Ask Riv about this page...');
+    const composer = screen.getByPlaceholderText('Ask Riva about this page...');
     const sendButton = screen.getByRole('button', { name: 'Send message' });
 
     expect((sendButton as HTMLButtonElement).disabled).toBe(true);
@@ -412,7 +566,7 @@ describe('RivSidepanel', () => {
       />
     );
 
-    expect(screen.queryByText('Message Riv')).toBeNull();
+    expect(screen.queryByText('Message Riva')).toBeNull();
     expect(
       screen.queryByText('Enter sends. Shift + Enter adds a line.')
     ).toBeNull();
@@ -433,7 +587,7 @@ describe('RivSidepanel', () => {
       />
     );
 
-    const composer = screen.getByPlaceholderText('Ask Riv about this page...');
+    const composer = screen.getByPlaceholderText('Ask Riva about this page...');
     fireEvent.change(composer, {
       target: {
         value: 'Line one'
@@ -500,5 +654,45 @@ describe('RivSidepanel', () => {
     );
 
     expect(transcript.scrollTop).toBe(480);
+  });
+
+  it('resets composer height after submit so empty state stays compact', async () => {
+    const onSend = vi.fn();
+
+    render(
+      <RivSidepanel
+        threadTitle="Riv workspace"
+        messages={messages}
+        proposals={[]}
+        preparedSelection={null}
+        isSending={false}
+        onSend={onSend}
+        onResolveProposal={vi.fn()}
+      />
+    );
+
+    const composer = screen.getByPlaceholderText(
+      'Ask Riva about this page...'
+    ) as HTMLTextAreaElement;
+
+    Object.defineProperty(composer, 'scrollHeight', {
+      configurable: true,
+      value: 320
+    });
+
+    fireEvent.change(composer, {
+      target: {
+        value: 'Line one\nLine two\nLine three\nLine four'
+      }
+    });
+
+    expect(composer.style.height).toBe('168px');
+
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => {
+      expect(composer.style.height).toBe('54px');
+      expect(composer.style.overflowY).toBe('hidden');
+    });
   });
 });

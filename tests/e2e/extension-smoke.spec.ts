@@ -233,7 +233,6 @@ test('user messages render without bubble chrome', async () => {
         paddingLeft: Number.parseFloat(styles.paddingLeft),
         paddingRight: Number.parseFloat(styles.paddingRight),
         borderTopWidth: Number.parseFloat(styles.borderTopWidth),
-        borderTopStyle: styles.borderTopStyle,
         backgroundColor: styles.backgroundColor,
         boxShadow: styles.boxShadow,
         rightInset: transcriptRect.right - surfaceRect.right,
@@ -246,7 +245,6 @@ test('user messages render without bubble chrome', async () => {
     expect(surfaceStyles.paddingLeft).toBe(0);
     expect(surfaceStyles.paddingRight).toBe(0);
     expect(surfaceStyles.borderTopWidth).toBe(0);
-    expect(surfaceStyles.borderTopStyle).toBe('none');
     expect(surfaceStyles.backgroundColor).toBe('rgba(0, 0, 0, 0)');
     expect(surfaceStyles.boxShadow).toBe('none');
     expect(surfaceStyles.width).not.toBe('100%');

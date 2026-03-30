@@ -260,6 +260,118 @@ describe('api app', () => {
     expect(detail.actionProposals[0]?.status).toBe('pending');
   });
 
+  it('streams a stateless turn from extension-supplied context without requiring a server thread', async () => {
+    const runStatelessAssistantTurn = async function* (input: {
+      userId: string;
+      thread: { id: string; title: string };
+      messages: Array<{ id: string; threadId: string; content: string }>;
+      content: string;
+      attachments: ContextAttachment[];
+    }) {
+      expect(input).toMatchObject({
+        userId: 'user_dev',
+        thread: {
+          id: 'thread_local_1',
+          title: 'Local Riv thread'
+        },
+        messages: [
+          {
+            id: 'message_user_previous',
+            threadId: 'thread_local_1',
+            content: 'Earlier local question.'
+          }
+        ],
+        content: 'Use my local history only.',
+        attachments: [pageAttachment]
+      });
+
+      yield {
+        version: '2026-03-29',
+        type: 'assistant_stream',
+        emittedAt: NOW,
+        payload: {
+          type: 'message_delta',
+          delta: 'Using the provided local context.'
+        }
+      };
+
+      yield {
+        version: '2026-03-29',
+        type: 'assistant_stream',
+        emittedAt: NOW,
+        payload: {
+          type: 'proposal_created',
+          proposal: {
+            id: 'proposal_local_1',
+            threadId: 'thread_local_1',
+            kind: 'groupTabs',
+            reason: 'The provided local tabs belong together.',
+            preview: {
+              title: 'Group local tabs',
+              summary: 'Create one group for the local Riv work.',
+              items: []
+            },
+            riskLevel: 'low',
+            requiresConfirmation: true,
+            payload: {
+              tabIds: [4]
+            },
+            createdAt: NOW
+          }
+        }
+      };
+    };
+
+    const { app } = createApp({
+      runtime: {
+        runStatelessAssistantTurn
+      } as never
+    });
+
+    const response = await app.request('/turns/stateless', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        thread: {
+          id: 'thread_local_1',
+          userId: 'user_dev',
+          title: 'Local Riv thread',
+          createdAt: NOW,
+          updatedAt: NOW
+        },
+        messages: [
+          {
+            id: 'message_user_previous',
+            threadId: 'thread_local_1',
+            role: 'user',
+            content: 'Earlier local question.',
+            attachments: [],
+            toolInvocations: [],
+            createdAt: NOW
+          }
+        ],
+        content: 'Use my local history only.',
+        attachments: [pageAttachment]
+      })
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('text/event-stream');
+
+    const envelopes = await readStream(response);
+    expect(envelopes.map((envelope) => envelope.payload.type)).toEqual([
+      'message_delta',
+      'proposal_created'
+    ]);
+    expect(
+      envelopes[1]?.payload.type === 'proposal_created'
+        ? envelopes[1].payload.proposal.id
+        : null
+    ).toBe('proposal_local_1');
+  });
+
   it('confirms and rejects action proposals', async () => {
     const { app } = await createTestApp();
     const threadId = await createThread(app);
@@ -362,5 +474,117 @@ describe('api app', () => {
         updatedAt: NOW
       }
     ]);
+  });
+
+  it('connects and disconnects Google integrations for dashboard automations', async () => {
+    const { app } = await createTestApp();
+
+    const beforeResponse = await app.request('/me/integrations/google');
+    expect(beforeResponse.status).toBe(200);
+    await expect(beforeResponse.json()).resolves.toMatchObject({
+      integration: {
+        provider: 'google',
+        status: 'disconnected',
+        calendarConnected: false,
+        gmailConnected: false
+      }
+    });
+
+    const connectResponse = await app.request('/me/integrations/google/connect', {
+      method: 'POST'
+    });
+    expect(connectResponse.status).toBe(200);
+    await expect(connectResponse.json()).resolves.toMatchObject({
+      integration: {
+        provider: 'google',
+        status: 'connected',
+        calendarConnected: true,
+        gmailConnected: true
+      }
+    });
+
+    const disconnectResponse = await app.request(
+      '/me/integrations/google/disconnect',
+      {
+        method: 'POST'
+      }
+    );
+    expect(disconnectResponse.status).toBe(200);
+    await expect(disconnectResponse.json()).resolves.toMatchObject({
+      integration: {
+        provider: 'google',
+        status: 'disconnected',
+        calendarConnected: false,
+        gmailConnected: false
+      }
+    });
+  });
+
+  it('returns proactive dashboard overview and automation details', async () => {
+    const { app } = await createTestApp();
+    await app.request('/me/integrations/google/connect', {
+      method: 'POST'
+    });
+
+    const overviewResponse = await app.request('/me/dashboard/overview');
+    expect(overviewResponse.status).toBe(200);
+    const overview = (await overviewResponse.json()) as {
+      meetings: Array<{ id: string }>;
+      reminders: Array<{ id: string; status: string }>;
+      gmailSuggestions: Array<{ id: string; status: string }>;
+    };
+    expect(overview.meetings.length).toBeGreaterThan(0);
+    expect(overview.reminders.length).toBeGreaterThan(0);
+    expect(overview.gmailSuggestions.length).toBeGreaterThan(0);
+    expect(overview.gmailSuggestions[0]?.status).toBe('new');
+
+    const automationsResponse = await app.request('/me/dashboard/automations');
+    expect(automationsResponse.status).toBe(200);
+    const automations = (await automationsResponse.json()) as {
+      automations: Array<{ key: string; enabled: boolean }>;
+      runLogs: Array<{ id: string; automationKey: string }>;
+      settings: { meetingReminderOffsetsMinutes: number[] };
+    };
+    expect(automations.automations.map((item) => item.key)).toContain(
+      'meeting-reminders'
+    );
+    expect(automations.runLogs.length).toBeGreaterThan(0);
+    expect(automations.settings.meetingReminderOffsetsMinutes).toEqual([
+      1440,
+      30
+    ]);
+
+    const updateResponse = await app.request('/me/dashboard/automation-settings', {
+      method: 'PATCH',
+      headers: {
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        meetingReminderOffsetsMinutes: [60, 15]
+      })
+    });
+    expect(updateResponse.status).toBe(200);
+    await expect(updateResponse.json()).resolves.toMatchObject({
+      settings: {
+        meetingReminderOffsetsMinutes: [60, 15]
+      }
+    });
+
+    const suggestionId = overview.gmailSuggestions[0]?.id;
+    expect(suggestionId).toBeDefined();
+
+    const dismissResponse = await app.request(
+      `/me/dashboard/suggestions/${suggestionId}/dismiss`,
+      {
+        method: 'POST'
+      }
+    );
+    expect(dismissResponse.status).toBe(200);
+    await expect(dismissResponse.json()).resolves.toMatchObject({
+      suggestion: {
+        id: suggestionId,
+        status: 'dismissed'
+      }
+    });
   });
 });

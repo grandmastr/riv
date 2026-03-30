@@ -26,7 +26,7 @@ describe('createThread', () => {
         )
     ) as typeof fetch;
 
-    await expect(createThread('Riv session')).rejects.toThrow(
+    await expect(createThread('Riva session')).rejects.toThrow(
       'password authentication failed for user "postgres"'
     );
   });

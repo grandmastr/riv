@@ -1,12 +1,23 @@
 import {
+  DashboardAutomationsResponseSchema,
+  DashboardOverviewResponseSchema,
+  GoogleIntegrationStatusSchema,
   MessageEnvelopeSchema,
+  AutomationSettingsSchema,
+  GmailReplySuggestionSchema,
   type ActionProposal,
+  type AutomationSettings,
+  type DashboardAutomationsResponse,
+  type DashboardOverviewResponse,
   type ContextAttachment,
+  type ConversationMessage,
   type ConversationThread,
+  type GoogleIntegrationStatus,
+  type GmailReplySuggestion,
   type MessageEnvelope
 } from '@riv/contracts';
 
-const DEFAULT_API_URL = 'http://localhost:3000';
+const DEFAULT_API_URL = 'http://localhost:8787';
 const DEFAULT_VIEWER_ID = 'user_dev';
 
 function getApiBaseUrl() {
@@ -103,7 +114,7 @@ export async function createThread(title: string) {
     throw new Error(
       await readErrorMessage(
         response,
-        `Unable to create a Riv thread (${response.status}).`
+        `Unable to create a Riva thread (${response.status}).`
       )
     );
   }
@@ -133,7 +144,46 @@ export async function* sendMessage(
     throw new Error(
       await readErrorMessage(
         response,
-        `Riv could not send the message (${response.status}).`
+        `Riva could not send the message (${response.status}).`
+      )
+    );
+  }
+
+  if (!response.body) {
+    for (const envelope of parseSsePayload(await response.text())) {
+      yield envelope;
+    }
+
+    return;
+  }
+
+  for await (const envelope of parseSseStream(response.body)) {
+    yield envelope;
+  }
+}
+
+export async function* sendStatelessTurn(input: {
+  thread: ConversationThread;
+  messages: ConversationMessage[];
+  content: string;
+  attachments: ContextAttachment[];
+}) {
+  const response = await fetch(`${getApiBaseUrl()}/turns/stateless`, {
+    method: 'POST',
+    headers: createHeaders(),
+    body: JSON.stringify({
+      thread: input.thread,
+      messages: input.messages,
+      content: input.content,
+      attachments: input.attachments
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      await readErrorMessage(
+        response,
+        `Riva could not process the turn (${response.status}).`
       )
     );
   }
@@ -170,7 +220,7 @@ export async function resolveProposal(
     throw new Error(
       await readErrorMessage(
         response,
-        `Riv could not ${endpoint} the proposal (${response.status}).`
+        `Riva could not ${endpoint} the proposal (${response.status}).`
       )
     );
   }
@@ -178,4 +228,167 @@ export async function resolveProposal(
   return response.json() as Promise<{
     result: MessageEnvelope['payload'] | unknown;
   }>;
+}
+
+export async function getGoogleIntegrationStatus() {
+  const response = await fetch(`${getApiBaseUrl()}/me/integrations/google`, {
+    method: 'GET',
+    headers: createHeaders()
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      await readErrorMessage(
+        response,
+        `Riva could not load connection status (${response.status}).`
+      )
+    );
+  }
+
+  const payload = (await response.json()) as {
+    integration: GoogleIntegrationStatus;
+  };
+
+  return GoogleIntegrationStatusSchema.parse(payload.integration);
+}
+
+export async function connectGoogleIntegration() {
+  const response = await fetch(
+    `${getApiBaseUrl()}/me/integrations/google/connect`,
+    {
+      method: 'POST',
+      headers: createHeaders()
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      await readErrorMessage(
+        response,
+        `Riva could not connect Google (${response.status}).`
+      )
+    );
+  }
+
+  const payload = (await response.json()) as {
+    integration: GoogleIntegrationStatus;
+  };
+  return GoogleIntegrationStatusSchema.parse(payload.integration);
+}
+
+export async function disconnectGoogleIntegration() {
+  const response = await fetch(
+    `${getApiBaseUrl()}/me/integrations/google/disconnect`,
+    {
+      method: 'POST',
+      headers: createHeaders()
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      await readErrorMessage(
+        response,
+        `Riva could not disconnect Google (${response.status}).`
+      )
+    );
+  }
+
+  const payload = (await response.json()) as {
+    integration: GoogleIntegrationStatus;
+  };
+  return GoogleIntegrationStatusSchema.parse(payload.integration);
+}
+
+export async function getDashboardOverview() {
+  const response = await fetch(`${getApiBaseUrl()}/me/dashboard/overview`, {
+    method: 'GET',
+    headers: createHeaders()
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      await readErrorMessage(
+        response,
+        `Riva could not load the dashboard (${response.status}).`
+      )
+    );
+  }
+
+  return DashboardOverviewResponseSchema.parse(
+    (await response.json()) as DashboardOverviewResponse
+  );
+}
+
+export async function getDashboardAutomations() {
+  const response = await fetch(`${getApiBaseUrl()}/me/dashboard/automations`, {
+    method: 'GET',
+    headers: createHeaders()
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      await readErrorMessage(
+        response,
+        `Riva could not load automations (${response.status}).`
+      )
+    );
+  }
+
+  return DashboardAutomationsResponseSchema.parse(
+    (await response.json()) as DashboardAutomationsResponse
+  );
+}
+
+export async function updateDashboardAutomationSettings(
+  input: Partial<AutomationSettings>
+) {
+  const response = await fetch(
+    `${getApiBaseUrl()}/me/dashboard/automation-settings`,
+    {
+      method: 'PATCH',
+      headers: createHeaders(),
+      body: JSON.stringify(input)
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      await readErrorMessage(
+        response,
+        `Riva could not update automation settings (${response.status}).`
+      )
+    );
+  }
+
+  const payload = (await response.json()) as {
+    settings: AutomationSettings;
+  };
+
+  return AutomationSettingsSchema.parse(payload.settings);
+}
+
+export async function dismissDashboardSuggestion(suggestionId: string) {
+  const response = await fetch(
+    `${getApiBaseUrl()}/me/dashboard/suggestions/${suggestionId}/dismiss`,
+    {
+      method: 'POST',
+      headers: createHeaders()
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      await readErrorMessage(
+        response,
+        `Riva could not dismiss that suggestion (${response.status}).`
+      )
+    );
+  }
+
+  const payload = (await response.json()) as {
+    suggestion: GmailReplySuggestion;
+  };
+
+  return GmailReplySuggestionSchema.parse(payload.suggestion);
 }
