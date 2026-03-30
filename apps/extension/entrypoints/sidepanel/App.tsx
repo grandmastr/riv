@@ -9,12 +9,22 @@ import type {
   ContextAttachment,
   ConversationMessage,
   ConversationThread,
+  DashboardAutomationsResponse,
+  DashboardOverviewResponse,
+  GoogleIntegrationStatus,
   PageContextSnapshot,
   SelectedTextContext
 } from '@riv/contracts';
 
 import {
-  sendStatelessTurn
+  connectGoogleIntegration,
+  disconnectGoogleIntegration,
+  dismissDashboardSuggestion,
+  getDashboardAutomations,
+  getDashboardOverview,
+  getGoogleIntegrationStatus,
+  sendStatelessTurn,
+  updateDashboardAutomationSettings
 } from '../../src/lib/api-client';
 import { handleSidePanelShortcutKeydown } from '../../src/content/shortcut-handler';
 import { getConversationStore } from '../../src/lib/local-conversation-store';
@@ -26,7 +36,8 @@ import {
 } from '../../src/lib/messages';
 import {
   RivSidepanel,
-  type PendingTaskItem
+  type PendingTaskItem,
+  type RivSurfaceTab
 } from '../../src/sidepanel/panel';
 
 const VIEWER_ID = 'user_dev';
@@ -121,7 +132,7 @@ function toThreadSummary(messages: ConversationMessage[]) {
   }
 
   const normalized = latestMessage.content
-    .replace(/[#>*`_[\]\(\)\-]/g, ' ')
+    .replace(/[#>*`_[\]()-]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 
@@ -332,6 +343,7 @@ async function withCurrentWindowScope(
 
 export default function App() {
   const conversationStore = getConversationStore();
+  const [activeSurface, setActiveSurface] = useState<RivSurfaceTab>('assistant');
   const [thread, setThread] = useState<ConversationThread | null>(null);
   const [threads, setThreads] = useState<ConversationThread[]>([]);
   const [threadSummaries, setThreadSummaries] = useState<ThreadSummaryMap>({});
@@ -347,6 +359,14 @@ export default function App() {
   const [pendingOperationLabel, setPendingOperationLabel] = useState<
     string | null
   >(null);
+  const [integrationStatus, setIntegrationStatus] =
+    useState<GoogleIntegrationStatus | null>(null);
+  const [dashboardOverview, setDashboardOverview] =
+    useState<DashboardOverviewResponse | null>(null);
+  const [dashboardAutomations, setDashboardAutomations] =
+    useState<DashboardAutomationsResponse | null>(null);
+  const [isDashboardLoading, setIsDashboardLoading] = useState(false);
+  const [dashboardError, setDashboardError] = useState<string | null>(null);
 
   async function refreshThreadCollections(
     listedThreads?: ConversationThread[]
@@ -384,6 +404,28 @@ export default function App() {
     setThreadSummaries(nextSummaries);
   }
 
+  async function refreshDashboardData() {
+    setDashboardError(null);
+    setIsDashboardLoading(true);
+
+    try {
+      const [integration, overview, automations] = await Promise.all([
+        getGoogleIntegrationStatus(),
+        getDashboardOverview(),
+        getDashboardAutomations()
+      ]);
+
+      setIntegrationStatus(integration);
+      setDashboardOverview(overview);
+      setDashboardAutomations(automations);
+    } catch (error) {
+      console.error(error);
+      setDashboardError(toErrorMessage(error));
+    } finally {
+      setIsDashboardLoading(false);
+    }
+  }
+
   useEffect(() => {
     void (async () => {
       const [snapshot, selection, localDetail, localThreads] = await Promise.all([
@@ -410,6 +452,8 @@ export default function App() {
         setMessages(localDetail.messages);
         setProposals(localDetail.proposals);
       }
+
+      await refreshDashboardData();
     })();
   }, [conversationStore]);
 
@@ -627,6 +671,7 @@ export default function App() {
       const assistantMessageId = `local-assistant-${Date.now()}`;
       const assistantCreatedAt = new Date().toISOString();
       let assistantContent = '';
+      let hasSeenToolActivity = false;
 
       for await (const envelope of sendStatelessTurn({
         thread: activeThread,
@@ -637,6 +682,9 @@ export default function App() {
         switch (envelope.payload.type) {
           case 'message_delta': {
             const { delta } = envelope.payload;
+            if (!hasSeenToolActivity) {
+              setPendingOperationLabel('Drafting response...');
+            }
             assistantContent = `${assistantContent}${delta}`;
             const assistantMessage = createLocalMessage({
               id: assistantMessageId,
@@ -650,16 +698,19 @@ export default function App() {
             break;
           }
           case 'tool_started': {
+            hasSeenToolActivity = true;
             setPendingOperationLabel(
               formatOperationLabel(envelope.payload.invocation.tool)
             );
             break;
           }
           case 'tool_finished': {
+            hasSeenToolActivity = true;
             setPendingOperationLabel('Drafting response...');
             break;
           }
           case 'proposal_created': {
+            hasSeenToolActivity = true;
             setPendingOperationLabel('Preparing action suggestion...');
             const { proposal } = envelope.payload;
 
@@ -815,11 +866,89 @@ export default function App() {
     }
   }
 
+  async function handleConnectGoogle() {
+    setDashboardError(null);
+
+    try {
+      const integration = await connectGoogleIntegration();
+      setIntegrationStatus(integration);
+      await refreshDashboardData();
+    } catch (error) {
+      console.error(error);
+      setDashboardError(toErrorMessage(error));
+    }
+  }
+
+  async function handleDisconnectGoogle() {
+    setDashboardError(null);
+
+    try {
+      const integration = await disconnectGoogleIntegration();
+      setIntegrationStatus(integration);
+      await refreshDashboardData();
+    } catch (error) {
+      console.error(error);
+      setDashboardError(toErrorMessage(error));
+    }
+  }
+
+  async function handleDismissDashboardSuggestion(suggestionId: string) {
+    try {
+      const suggestion = await dismissDashboardSuggestion(suggestionId);
+      setDashboardOverview((current) => {
+        if (!current) {
+          return current;
+        }
+
+        return {
+          ...current,
+          gmailSuggestions: current.gmailSuggestions.map((item) =>
+            item.id === suggestion.id ? suggestion : item
+          )
+        };
+      });
+    } catch (error) {
+      console.error(error);
+      setDashboardError(toErrorMessage(error));
+    }
+  }
+
+  async function handleSaveWorkflowSettings(input: {
+    meetingReminderOffsetsMinutes: number[];
+  }) {
+    try {
+      const settings = await updateDashboardAutomationSettings(input);
+      setDashboardAutomations((current) =>
+        current
+          ? {
+              ...current,
+              settings
+            }
+          : current
+      );
+      await refreshDashboardData();
+    } catch (error) {
+      console.error(error);
+      setDashboardError(toErrorMessage(error));
+    }
+  }
+
   return (
     <RivSidepanel
+      activeSurface={activeSurface}
       activeThreadId={thread?.id ?? null}
+      dashboardAutomations={dashboardAutomations}
+      dashboardError={dashboardError}
+      dashboardOverview={dashboardOverview}
+      integrationStatus={integrationStatus}
+      isDashboardLoading={isDashboardLoading}
+      onChangeSurface={setActiveSurface}
+      onConnectGoogle={handleConnectGoogle}
       onCreateChat={handleCreateChat}
       onDeleteThread={handleDeleteThread}
+      onDisconnectGoogle={handleDisconnectGoogle}
+      onDismissDashboardSuggestion={handleDismissDashboardSuggestion}
+      onSaveWorkflowSettings={handleSaveWorkflowSettings}
       onSelectThread={handleSelectThread}
       threadTitle={thread?.title || pageContext?.title || 'Riva'}
       isSending={isSending}

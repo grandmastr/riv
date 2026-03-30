@@ -294,11 +294,13 @@ async function createContentPageExtractionHarness(options?: {
       }
     }
   });
-  vi.spyOn(window, 'getSelection').mockReturnValue(selection as Selection);
+  vi.spyOn(window, 'getSelection').mockReturnValue(
+    selection as unknown as Selection
+  );
 
   const contentModule = await import('../../entrypoints/content.ts');
 
-  contentModule.default.main();
+  contentModule.default.main({} as never);
 
   const onMessage = runtimeListener.mock.calls[0]?.[0] as (
     message: { type: string; tabId?: number },

@@ -785,9 +785,11 @@ describe('openai model gateway', () => {
     expect(systemText).toContain(
       'When the user requests a supported tab-management action and the provided context includes enough tab or tab-group information, call create_action_proposal with the exact action you recommend.'
     );
-    expect(systemText).toContain('Include timestamps when available.');
     expect(systemText).toContain(
-      'Acknowledge when a transcript is unavailable or failed.'
+      'For YouTube/video summaries, do not call out transcript availability, transcript failures, or extraction internals unless the user explicitly asks.'
+    );
+    expect(systemText).not.toContain(
+      'When the user explicitly asks for transcript details, include timestamps when available.'
     );
     const actionTool = request.tools?.find(
       (tool) => tool.name === 'create_action_proposal'
@@ -816,6 +818,60 @@ describe('openai model gateway', () => {
     expect(serializedInput).toContain('"kind":"youtube-video"');
     expect(serializedInput).toContain('"transcriptStatus":"available"');
     expect(serializedInput).toContain('"timestampLabel":"0:32"');
+  });
+
+  it('adds transcript-meta instructions only when the user explicitly asks for transcript details', async () => {
+    openAIStreamMock.mockReturnValue(
+      createOpenAITextStream('Here are the key transcript timestamps.')
+    );
+
+    const gateway = new OpenAIModelGateway({
+      apiKey: 'test-key'
+    });
+
+    const input: ModelGatewayTurnInput = {
+      thread: {
+        id: 'thread_openai_transcript_request',
+        userId: 'user_dev',
+        title: 'Transcript request',
+        createdAt: NOW,
+        updatedAt: NOW
+      },
+      messages: [],
+      userMessage: {
+        id: 'message_user_openai_transcript_request',
+        threadId: 'thread_openai_transcript_request',
+        role: 'user',
+        content: 'Give me transcript timestamps and exact quotes from this video.',
+        attachments: [],
+        toolInvocations: [],
+        createdAt: NOW
+      },
+      transientAttachments: [youtubeAttachment],
+      memories: []
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _event of gateway.streamTurn(input)) {
+      // Exhaust the stream so the request is captured.
+    }
+
+    const request = openAIStreamMock.mock.calls[0]?.[0] as {
+      input: Array<{
+        content: Array<{
+          text: string;
+        }>;
+      }>;
+    };
+
+    const systemText = request.input[0]?.content[0]?.text ?? '';
+
+    expect(systemText).toContain(
+      'When the user explicitly asks for transcript details, include timestamps when available.'
+    );
+    expect(systemText).toContain(
+      'If transcript data is missing for a transcript-specific request, state that clearly and then continue with the best available evidence.'
+    );
   });
 
   it('prioritizes explicit browser actions over page or video summaries', async () => {
@@ -902,6 +958,245 @@ describe('openai model gateway', () => {
         createdAt: NOW
       },
       transientAttachments: [pageAttachment],
+      memories: []
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _event of gateway.streamTurn(input)) {
+      // Exhaust the stream so the request is captured.
+    }
+
+    const request = openAIStreamMock.mock.calls[0]?.[0] as {
+      tools?: Array<Record<string, unknown>>;
+    };
+
+    const webSearchEnabled = request.tools?.some(
+      (tool) => tool.type === 'web_search_preview'
+    );
+    const webSearchTool = request.tools?.find(
+      (tool) => tool.type === 'web_search_preview'
+    ) as { search_context_size?: string } | undefined;
+
+    expect(webSearchEnabled).toBe(true);
+    expect(webSearchTool?.search_context_size).toBe('medium');
+  });
+
+  it('enables web-search tooling for first-hint discovery requests', async () => {
+    openAIStreamMock.mockReturnValue(
+      createOpenAITextStream('I will rank the top videos with links.')
+    );
+
+    const gateway = new OpenAIModelGateway({
+      apiKey: 'test-key'
+    });
+
+    const input: ModelGatewayTurnInput = {
+      thread: {
+        id: 'thread_discovery_first_hint',
+        userId: 'user_dev',
+        title: 'Discovery first hint',
+        createdAt: NOW,
+        updatedAt: NOW
+      },
+      messages: [],
+      userMessage: {
+        id: 'message_user_discovery_first_hint',
+        threadId: 'thread_discovery_first_hint',
+        role: 'user',
+        content:
+          'Top 3 Vinh Giang videos about communication ranked by relevance with links.',
+        attachments: [],
+        toolInvocations: [],
+        createdAt: NOW
+      },
+      transientAttachments: [],
+      memories: []
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _event of gateway.streamTurn(input)) {
+      // Exhaust the stream so the request is captured.
+    }
+
+    const request = openAIStreamMock.mock.calls[0]?.[0] as {
+      tools?: Array<Record<string, unknown>>;
+    };
+
+    const webSearchEnabled = request.tools?.some(
+      (tool) => tool.type === 'web_search_preview'
+    );
+
+    expect(webSearchEnabled).toBe(true);
+  });
+
+  it('adds direct YouTube link policy instructions for YouTube link requests', async () => {
+    openAIStreamMock.mockReturnValue(
+      createOpenAITextStream('Retrying YouTube search with direct links.')
+    );
+
+    const gateway = new OpenAIModelGateway({
+      apiKey: 'test-key'
+    });
+
+    const input: ModelGatewayTurnInput = {
+      thread: {
+        id: 'thread_youtube_links_policy',
+        userId: 'user_dev',
+        title: 'YouTube links',
+        createdAt: NOW,
+        updatedAt: NOW
+      },
+      messages: [
+        {
+          id: 'message_user_youtube_prior',
+          threadId: 'thread_youtube_links_policy',
+          role: 'user',
+          content:
+            'Search YouTube for Vinh Giang communication videos and return top 3.',
+          attachments: [],
+          toolInvocations: [],
+          createdAt: NOW
+        }
+      ],
+      userMessage: {
+        id: 'message_user_youtube_retry',
+        threadId: 'thread_youtube_links_policy',
+        role: 'user',
+        content: 'Retry the yt search and give direct YouTube links only.',
+        attachments: [],
+        toolInvocations: [],
+        createdAt: NOW
+      },
+      transientAttachments: [],
+      memories: []
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _event of gateway.streamTurn(input)) {
+      // Exhaust the stream so the request is captured.
+    }
+
+    const request = openAIStreamMock.mock.calls[0]?.[0] as {
+      input: Array<{
+        content: Array<{
+          text: string;
+        }>;
+      }>;
+    };
+
+    const systemText = request.input[0]?.content[0]?.text ?? '';
+
+    expect(systemText).toContain(
+      'For YouTube requests, only present direct YouTube video links'
+    );
+    expect(systemText).toContain(
+      'Do not present transcript mirrors or summary sites as the primary video links.'
+    );
+    expect(systemText).toContain(
+      'If direct YouTube URLs are not available in search results, explicitly say that and ask to retry; do not claim success.'
+    );
+  });
+
+  it('does not add direct YouTube link policy instructions for general web lookups', async () => {
+    openAIStreamMock.mockReturnValue(
+      createOpenAITextStream('Searching the web for current options.')
+    );
+
+    const gateway = new OpenAIModelGateway({
+      apiKey: 'test-key'
+    });
+
+    const input: ModelGatewayTurnInput = {
+      thread: {
+        id: 'thread_general_web_lookup_policy',
+        userId: 'user_dev',
+        title: 'General web lookup',
+        createdAt: NOW,
+        updatedAt: NOW
+      },
+      messages: [],
+      userMessage: {
+        id: 'message_user_general_web_lookup_policy',
+        threadId: 'thread_general_web_lookup_policy',
+        role: 'user',
+        content: 'Search the web for current CH alternatives and prices.',
+        attachments: [],
+        toolInvocations: [],
+        createdAt: NOW
+      },
+      transientAttachments: [],
+      memories: []
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _event of gateway.streamTurn(input)) {
+      // Exhaust the stream so the request is captured.
+    }
+
+    const request = openAIStreamMock.mock.calls[0]?.[0] as {
+      input: Array<{
+        content: Array<{
+          text: string;
+        }>;
+      }>;
+    };
+
+    const systemText = request.input[0]?.content[0]?.text ?? '';
+
+    expect(systemText).not.toContain(
+      'For YouTube requests, only present direct YouTube video links'
+    );
+  });
+
+  it('keeps web-search tooling enabled for follow-up confirmations after a search request', async () => {
+    openAIStreamMock.mockReturnValue(
+      createOpenAITextStream('I will run the web search now.')
+    );
+
+    const gateway = new OpenAIModelGateway({
+      apiKey: 'test-key'
+    });
+
+    const input: ModelGatewayTurnInput = {
+      thread: {
+        id: 'thread_web_lookup_followup',
+        userId: 'user_dev',
+        title: 'Web lookup follow-up',
+        createdAt: NOW,
+        updatedAt: NOW
+      },
+      messages: [
+        {
+          id: 'message_user_web_lookup_prior',
+          threadId: 'thread_web_lookup_followup',
+          role: 'user',
+          content:
+            'Search YouTube for Vinh Giang videos about communication and give me the top 3 by relevance.',
+          attachments: [],
+          toolInvocations: [],
+          createdAt: NOW
+        },
+        {
+          id: 'message_assistant_web_lookup_prior',
+          threadId: 'thread_web_lookup_followup',
+          role: 'assistant',
+          content:
+            'Ready — I can search YouTube and return the top 3 with links and timestamps.',
+          attachments: [],
+          toolInvocations: [],
+          createdAt: NOW
+        }
+      ],
+      userMessage: {
+        id: 'message_user_web_lookup_followup',
+        threadId: 'thread_web_lookup_followup',
+        role: 'user',
+        content: 'Go ahread',
+        attachments: [],
+        toolInvocations: [],
+        createdAt: NOW
+      },
+      transientAttachments: [],
       memories: []
     };
 

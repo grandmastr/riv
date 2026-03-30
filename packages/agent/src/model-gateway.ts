@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { z } from 'zod';
-import type { ContextAttachment } from '@riv/contracts';
+import type { ContextAttachment, ConversationMessage } from '@riv/contracts';
 
 import type {
   ActionProposalDraft,
@@ -96,7 +96,7 @@ const actionProposalTool = {
 
 const webSearchTool = {
   type: 'web_search_preview' as const,
-  search_context_size: 'low' as const
+  search_context_size: 'medium' as const
 };
 
 function parseJsonObject(argumentsText: string) {
@@ -762,9 +762,100 @@ function isTabActionRequest(content: string) {
   );
 }
 
-function shouldEnableWebSearchTool(content: string) {
-  return /\b(search|lookup|look up|find online|web|internet|price|prices|availability|available|latest|current|today|alternatives?|compare)\b/.test(
-    content
+const WEB_SEARCH_INTENT_PATTERN =
+  /\b(search|lookup|look up|find(?: online)?|web|internet|price|prices|availability|available|latest|current|today|alternatives?|compare|youtube|yt|rank(?:ed|ing)?|relevance|links?|urls?)\b/;
+const WEB_SEARCH_CONTINUATION_PATTERN =
+  /\b(go(?:\s+|[-])?(?:ahead|ahread)|do it|apply(?: them| it)?|proceed|continue|confirm|yes|sure|ok(?:ay)?)\b/;
+const WEB_SEARCH_ASSISTANT_COMMITMENT_PATTERN =
+  /\b(i can search|i(?:'| a)m ready to search|ready.*search|return the top|with links|timestamps?)\b/;
+const WEB_SEARCH_DISCOVERY_PATTERN =
+  /\b(top\s*\d+|most relevant|by relevance|rank(?:ed|ing)?|with links?|direct links?|source links?)\b/;
+const WEB_SEARCH_DISCOVERY_ENTITY_PATTERN =
+  /\b(videos?|channels?|playlists?|articles?|posts?|resources?|tutorials?)\b/;
+const YOUTUBE_REFERENCE_PATTERN = /\b(youtube|youtu\.be|\byt\b)\b/;
+const YOUTUBE_LINK_REQUEST_PATTERN =
+  /\b(?:direct|actual|real)\s+(?:youtube|yt|youtu\.be)\s+(?:links?|urls?)\b|\b(?:youtube|yt|youtu\.be)\s+(?:links?|urls?)\b|\b(?:links?|urls?)\s+to\s+(?:youtube|yt|youtu\.be)\b/;
+const RETRY_PATTERN =
+  /\b(retry|try again|again|rerun|re-run|redo|go(?:\s+|[-])?(?:ahead|ahread))\b/;
+const TRANSCRIPT_DETAIL_REQUEST_PATTERN =
+  /\b(transcript|captions?|subtitles?|timestamp(?:s)?|timecode(?:s)?|quote|quotes|verbatim|exact words?|what did (?:he|she|they) say|where (?:in|at) (?:the )?video|source evidence|evidence source)\b/;
+
+function hasRecentWebSearchContext(messages: ConversationMessage[]) {
+  const recentMessages = [...messages].slice(-6);
+
+  return recentMessages.some((message) => {
+    const normalized = message.content.toLowerCase();
+
+    return (
+      WEB_SEARCH_INTENT_PATTERN.test(normalized) ||
+      WEB_SEARCH_ASSISTANT_COMMITMENT_PATTERN.test(normalized)
+    );
+  });
+}
+
+function shouldEnableWebSearchTool(
+  content: string,
+  messages: ConversationMessage[]
+) {
+  if (WEB_SEARCH_INTENT_PATTERN.test(content)) {
+    return true;
+  }
+
+  if (
+    WEB_SEARCH_DISCOVERY_PATTERN.test(content) &&
+    WEB_SEARCH_DISCOVERY_ENTITY_PATTERN.test(content)
+  ) {
+    return true;
+  }
+
+  if (!WEB_SEARCH_CONTINUATION_PATTERN.test(content)) {
+    return false;
+  }
+
+  return hasRecentWebSearchContext(messages);
+}
+
+function hasRecentYouTubeContext(messages: ConversationMessage[]) {
+  const recentMessages = [...messages].slice(-8);
+
+  return recentMessages.some((message) =>
+    YOUTUBE_REFERENCE_PATTERN.test(message.content.toLowerCase())
+  );
+}
+
+function shouldUseYouTubeDirectLinkPolicy(
+  content: string,
+  messages: ConversationMessage[]
+) {
+  if (YOUTUBE_LINK_REQUEST_PATTERN.test(content)) {
+    return true;
+  }
+
+  if (
+    YOUTUBE_REFERENCE_PATTERN.test(content) &&
+    WEB_SEARCH_INTENT_PATTERN.test(content)
+  ) {
+    return true;
+  }
+
+  return RETRY_PATTERN.test(content) && hasRecentYouTubeContext(messages);
+}
+
+function shouldSurfaceTranscriptDetails(
+  content: string,
+  messages: ConversationMessage[]
+) {
+  if (TRANSCRIPT_DETAIL_REQUEST_PATTERN.test(content)) {
+    return true;
+  }
+
+  if (!WEB_SEARCH_CONTINUATION_PATTERN.test(content)) {
+    return false;
+  }
+
+  const recentMessages = [...messages].slice(-6);
+  return recentMessages.some((message) =>
+    TRANSCRIPT_DETAIL_REQUEST_PATTERN.test(message.content.toLowerCase())
   );
 }
 
@@ -952,7 +1043,18 @@ export class OpenAIModelGateway implements ModelGateway {
     const shouldForceActionProposal =
       hasTabsContext(input.transientAttachments) &&
       isTabActionRequest(normalizedUserMessage);
-    const enabledTools = shouldEnableWebSearchTool(normalizedUserMessage)
+    const shouldUseDirectYouTubeLinkPolicy = shouldUseYouTubeDirectLinkPolicy(
+      normalizedUserMessage,
+      input.messages
+    );
+    const shouldSurfaceTranscriptMeta = shouldSurfaceTranscriptDetails(
+      normalizedUserMessage,
+      input.messages
+    );
+    const enabledTools = shouldEnableWebSearchTool(
+      normalizedUserMessage,
+      input.messages
+    )
       ? [actionProposalTool, webSearchTool]
       : [actionProposalTool];
 
@@ -978,15 +1080,27 @@ export class OpenAIModelGateway implements ModelGateway {
                 'Use short headings and bullets when the answer has multiple parts.',
                 'Prefer transcript evidence over description inference for YouTube media.',
                 'If the user asks about video or page content, summarize the main point first and support it with concise evidence.',
+                'For YouTube/video summaries, do not call out transcript availability, transcript failures, or extraction internals unless the user explicitly asks.',
                 'If the user asks for a browser action or operational task, fulfill that request directly and do not preface the reply with a page or video summary unless they asked for one.',
                 'When the user requests a supported tab-management action and the provided context includes enough tab or tab-group information, call create_action_proposal with the exact action you recommend.',
                 'Do not ask for confirmation in prose when using create_action_proposal; the UI will present the confirmation controls.',
                 'When the user asks for current web facts (prices, availability, recent updates, external catalog checks), use web search before answering.',
                 'After web search, include concrete source links in the reply.',
-                'Include timestamps when available.',
-                'Acknowledge when a transcript is unavailable or failed.',
+                ...(shouldSurfaceTranscriptMeta
+                  ? [
+                      'When the user explicitly asks for transcript details, include timestamps when available.',
+                      'If transcript data is missing for a transcript-specific request, state that clearly and then continue with the best available evidence.'
+                    ]
+                  : []),
                 'Do not wrap the full reply in code fences.',
-                'Do not invent browser actions unless the server provides them separately.'
+                'Do not invent browser actions unless the server provides them separately.',
+                ...(shouldUseDirectYouTubeLinkPolicy
+                  ? [
+                      'For YouTube requests, only present direct YouTube video links (`https://www.youtube.com/watch?v=...` or `https://youtu.be/...`) as the primary links.',
+                      'Do not present transcript mirrors or summary sites as the primary video links.',
+                      'If direct YouTube URLs are not available in search results, explicitly say that and ask to retry; do not claim success.'
+                    ]
+                  : [])
               ].join(' ')
             }
           ]

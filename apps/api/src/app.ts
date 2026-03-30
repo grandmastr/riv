@@ -1,6 +1,9 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import {
+  DashboardAutomationsResponseSchema,
+  DashboardOverviewResponseSchema,
+  GoogleIntegrationStatusSchema,
   ContextAttachmentSchema,
   ConversationMessageSchema,
   ConversationThreadSchema,
@@ -11,6 +14,10 @@ import type { AgentRuntime } from '@riv/agent';
 
 import { AgentRuntimeError } from '@riv/agent';
 import { createAuthService, type AuthService } from './auth';
+import {
+  createInMemoryDashboardService,
+  type DashboardService
+} from './dashboard';
 
 const CreateThreadBodySchema = z.object({
   title: z.string().min(1)
@@ -31,6 +38,13 @@ const CreateStatelessTurnBodySchema = z.object({
 const CreateMemoryBodySchema = z.object({
   title: z.string().min(1),
   content: z.string().min(1)
+});
+
+const UpdateAutomationSettingsBodySchema = z.object({
+  meetingReminderOffsetsMinutes: z.array(z.number().int().positive()).min(1)
+    .optional(),
+  enabledMeetingReminders: z.boolean().optional(),
+  enabledGmailSuggestions: z.boolean().optional()
 });
 
 function createStreamErrorEnvelope(error: unknown): MessageEnvelope {
@@ -105,10 +119,16 @@ function createJsonError(error: unknown) {
 export function createApp(options: {
   runtime: AgentRuntime;
   authService?: AuthService;
+  dashboardService?: DashboardService;
   now?: () => string;
 }) {
   const app = new Hono();
   const authService = options.authService ?? createAuthService();
+  const dashboardService =
+    options.dashboardService ??
+    createInMemoryDashboardService({
+      now: options.now
+    });
 
   app.onError((error) => createJsonError(error));
 
@@ -241,6 +261,93 @@ export function createApp(options: {
       },
       201
     );
+  });
+
+  app.get('/me/integrations/google', async (context) => {
+    const viewer = await authService.resolveViewer(context);
+    const integration = GoogleIntegrationStatusSchema.parse(
+      await dashboardService.getGoogleIntegrationStatus(viewer.id)
+    );
+
+    return context.json({
+      integration
+    });
+  });
+
+  app.post('/me/integrations/google/connect', async (context) => {
+    const viewer = await authService.resolveViewer(context);
+    const integration = GoogleIntegrationStatusSchema.parse(
+      await dashboardService.connectGoogle(viewer.id)
+    );
+
+    return context.json({
+      integration
+    });
+  });
+
+  app.post('/me/integrations/google/disconnect', async (context) => {
+    const viewer = await authService.resolveViewer(context);
+    const integration = GoogleIntegrationStatusSchema.parse(
+      await dashboardService.disconnectGoogle(viewer.id)
+    );
+
+    return context.json({
+      integration
+    });
+  });
+
+  app.get('/me/dashboard/overview', async (context) => {
+    const viewer = await authService.resolveViewer(context);
+    const overview = DashboardOverviewResponseSchema.parse(
+      await dashboardService.getOverview(viewer.id)
+    );
+
+    return context.json(overview);
+  });
+
+  app.get('/me/dashboard/automations', async (context) => {
+    const viewer = await authService.resolveViewer(context);
+    const automations = DashboardAutomationsResponseSchema.parse(
+      await dashboardService.getAutomations(viewer.id)
+    );
+
+    return context.json(automations);
+  });
+
+  app.patch('/me/dashboard/automation-settings', async (context) => {
+    const viewer = await authService.resolveViewer(context);
+    const body = UpdateAutomationSettingsBodySchema.parse(
+      await context.req.json()
+    );
+    const settings = await dashboardService.updateAutomationSettings(
+      viewer.id,
+      body
+    );
+
+    return context.json({
+      settings
+    });
+  });
+
+  app.post('/me/dashboard/suggestions/:suggestionId/dismiss', async (context) => {
+    const viewer = await authService.resolveViewer(context);
+    const suggestion = await dashboardService.dismissSuggestion(
+      viewer.id,
+      context.req.param('suggestionId')
+    );
+
+    if (!suggestion) {
+      return context.json(
+        {
+          error: 'Suggestion was not found.'
+        },
+        404
+      );
+    }
+
+    return context.json({
+      suggestion
+    });
   });
 
   return {

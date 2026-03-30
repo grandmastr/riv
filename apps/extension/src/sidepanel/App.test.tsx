@@ -10,11 +10,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   ActionExecutionResult,
   ActionProposal,
+  AutomationSettings,
   AssistantStreamEvent,
   BrowserTabGroupSummary,
   BrowserTabSummary,
   ConversationMessage,
   ConversationThread,
+  DashboardAutomationsResponse,
+  DashboardOverviewResponse,
+  GoogleIntegrationStatus,
   MessageEnvelope,
   PageContextSnapshot,
   SelectedTextContext
@@ -26,6 +30,8 @@ import {
 } from '../lib/local-conversation-store';
 
 const NOW = '2026-03-29T15:00:00.000Z';
+const MOCK_UUID = '00000000-0000-4000-8000-000000000001';
+const MOCK_THREAD_ID = `thread_${MOCK_UUID}`;
 
 const pageSnapshot: PageContextSnapshot = {
   tabId: 7,
@@ -65,6 +71,13 @@ const browserTabs: BrowserTabSummary[] = [
 const browserTabGroups: BrowserTabGroupSummary[] = [];
 
 const sendStatelessTurnMock = vi.fn();
+const getGoogleIntegrationStatusMock = vi.fn();
+const connectGoogleIntegrationMock = vi.fn();
+const disconnectGoogleIntegrationMock = vi.fn();
+const getDashboardOverviewMock = vi.fn();
+const getDashboardAutomationsMock = vi.fn();
+const updateDashboardAutomationSettingsMock = vi.fn();
+const dismissDashboardSuggestionMock = vi.fn();
 const sendBackgroundMessageMock = vi.fn();
 const subscribeToPreparedSelectionMock = vi.fn();
 const requestSidePanelToggleMock = vi.fn();
@@ -73,7 +86,14 @@ const localConversationStoreMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../lib/api-client', () => ({
-  sendStatelessTurn: sendStatelessTurnMock
+  sendStatelessTurn: sendStatelessTurnMock,
+  getGoogleIntegrationStatus: getGoogleIntegrationStatusMock,
+  connectGoogleIntegration: connectGoogleIntegrationMock,
+  disconnectGoogleIntegration: disconnectGoogleIntegrationMock,
+  getDashboardOverview: getDashboardOverviewMock,
+  getDashboardAutomations: getDashboardAutomationsMock,
+  updateDashboardAutomationSettings: updateDashboardAutomationSettingsMock,
+  dismissDashboardSuggestion: dismissDashboardSuggestionMock
 }));
 
 vi.mock('../lib/messages', () => ({
@@ -104,11 +124,96 @@ function createEnvelope(payload: AssistantStreamEvent): MessageEnvelope {
   };
 }
 
+const connectedGoogleStatus: GoogleIntegrationStatus = {
+  provider: 'google',
+  status: 'connected',
+  calendarConnected: true,
+  gmailConnected: true,
+  connectedAt: NOW,
+  scopes: ['calendar.readonly', 'gmail.readonly']
+};
+
+const dashboardOverview: DashboardOverviewResponse = {
+  meetings: [
+    {
+      id: 'meeting_1',
+      title: 'Weekly product sync',
+      startAt: '2026-03-29T15:30:00.000Z',
+      endAt: '2026-03-29T16:00:00.000Z',
+      attendees: ['alex@example.com'],
+      source: 'google-calendar'
+    }
+  ],
+  reminders: [
+    {
+      id: 'reminder_1',
+      meetingId: 'meeting_1',
+      triggerAt: '2026-03-29T15:00:00.000Z',
+      status: 'scheduled'
+    }
+  ],
+  gmailSuggestions: [
+    {
+      id: 'suggestion_1',
+      meetingId: 'meeting_1',
+      threadId: 'thread_1',
+      subject: 'Agenda for weekly product sync',
+      suggestion:
+        "Hi team, sharing today's agenda before we start: roadmap status and blockers.",
+      status: 'new',
+      matchSignals: ['participant-overlap', 'subject-similarity']
+    }
+  ]
+};
+
+const automationSettings: AutomationSettings = {
+  meetingReminderOffsetsMinutes: [1440, 30],
+  enabledMeetingReminders: true,
+  enabledGmailSuggestions: true
+};
+
+const dashboardAutomations: DashboardAutomationsResponse = {
+  automations: [
+    {
+      key: 'meeting-reminders',
+      name: 'Meeting reminders',
+      enabled: true,
+      status: 'healthy',
+      nextRunAt: '2026-03-29T15:05:00.000Z'
+    },
+    {
+      key: 'gmail-reply-suggestions',
+      name: 'Gmail reply suggestions',
+      enabled: true,
+      status: 'healthy',
+      nextRunAt: '2026-03-29T15:10:00.000Z'
+    }
+  ],
+  runLogs: [
+    {
+      id: 'run_1',
+      automationKey: 'meeting-reminders',
+      status: 'success',
+      message: 'Scheduled reminders for 1 meeting.',
+      startedAt: NOW,
+      finishedAt: NOW
+    }
+  ],
+  settings: automationSettings
+};
+
 describe('sidepanel App', () => {
   let conversationStore: LocalConversationStore;
 
   beforeEach(() => {
     sendStatelessTurnMock.mockReset();
+    getGoogleIntegrationStatusMock.mockReset();
+    connectGoogleIntegrationMock.mockReset();
+    disconnectGoogleIntegrationMock.mockReset();
+    getDashboardOverviewMock.mockReset();
+    getDashboardAutomationsMock.mockReset();
+    updateDashboardAutomationSettingsMock.mockReset();
+    dismissDashboardSuggestionMock.mockReset();
     sendBackgroundMessageMock.mockReset();
     subscribeToPreparedSelectionMock.mockReset();
     requestSidePanelToggleMock.mockReset();
@@ -117,7 +222,25 @@ describe('sidepanel App', () => {
     localConversationStoreMocks.getConversationStore.mockReturnValue(
       conversationStore
     );
-    vi.spyOn(globalThis.crypto, 'randomUUID').mockReturnValue('local-thread-1');
+    getGoogleIntegrationStatusMock.mockResolvedValue(connectedGoogleStatus);
+    connectGoogleIntegrationMock.mockResolvedValue(connectedGoogleStatus);
+    disconnectGoogleIntegrationMock.mockResolvedValue({
+      ...connectedGoogleStatus,
+      status: 'disconnected',
+      calendarConnected: false,
+      gmailConnected: false,
+      scopes: []
+    } satisfies GoogleIntegrationStatus);
+    getDashboardOverviewMock.mockResolvedValue(dashboardOverview);
+    getDashboardAutomationsMock.mockResolvedValue(dashboardAutomations);
+    updateDashboardAutomationSettingsMock.mockResolvedValue(automationSettings);
+    dismissDashboardSuggestionMock.mockResolvedValue({
+      ...dashboardOverview.gmailSuggestions[0]!,
+      status: 'dismissed'
+    });
+    vi.spyOn(globalThis.crypto, 'randomUUID').mockReturnValue(
+      MOCK_UUID
+    );
   });
 
   afterEach(() => {
@@ -850,6 +973,7 @@ describe('sidepanel App', () => {
     await conversationStore.upsertThread(thread);
     sendStatelessTurnMock.mockReturnValue(
       (async function* () {
+        yield* [];
         throw new Error('Failed to fetch');
       })()
     );
@@ -954,13 +1078,6 @@ describe('sidepanel App', () => {
   });
 
   it('persists created threads and strips transient page and selection attachments from local messages', async () => {
-    const thread: ConversationThread = {
-      id: 'thread_1',
-      userId: 'user_dev',
-      title: 'Riv docs',
-      createdAt: NOW,
-      updatedAt: NOW
-    };
     const preparedSelection: SelectedTextContext = {
       tabId: 7,
       url: 'https://docs.riv.dev',
@@ -1011,7 +1128,7 @@ describe('sidepanel App', () => {
 
     const detail = await conversationStore.getLatestThreadDetail();
 
-    expect(detail?.thread.id).toBe('thread_local-thread-1');
+    expect(detail?.thread.id).toBe(MOCK_THREAD_ID);
     expect(detail?.messages).toHaveLength(2);
     expect(detail?.messages[0]?.content).toBe('Persist this exchange');
     expect(detail?.messages[0]?.attachments).toEqual([]);
@@ -1051,7 +1168,7 @@ describe('sidepanel App', () => {
           type: 'proposal_created',
           proposal: {
             id: 'proposal_tabs',
-            threadId: 'thread_local-thread-1',
+            threadId: MOCK_THREAD_ID,
             kind: 'groupTabs',
             reason: 'The tabs all belong to Riv work.',
             preview: {
@@ -1092,7 +1209,7 @@ describe('sidepanel App', () => {
 
     expect(sendStatelessTurnMock).toHaveBeenCalledWith({
       thread: expect.objectContaining({
-        id: 'thread_local-thread-1',
+        id: MOCK_THREAD_ID,
         title: 'Riv docs',
         userId: 'user_dev'
       }),
@@ -1246,7 +1363,7 @@ describe('sidepanel App', () => {
           type: 'proposal_created',
           proposal: {
             id: 'proposal_fast_tabs',
-            threadId: 'thread_local-thread-1',
+            threadId: MOCK_THREAD_ID,
             kind: 'groupTabs',
             reason: 'The tabs all belong together.',
             preview: {
@@ -1562,5 +1679,75 @@ describe('sidepanel App', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Open chats' }));
     await screen.findByRole('button', { name: 'Riv docs' });
+  });
+
+  it('renders only assistant/workflow tabs and moves connections under settings', async () => {
+    sendBackgroundMessageMock.mockImplementation(
+      async (message: { type: string }) => {
+        if (message.type === 'riv/read-active-page') {
+          return pageSnapshot;
+        }
+
+        if (message.type === 'riv/read-selection') {
+          return null;
+        }
+
+        return null;
+      }
+    );
+    subscribeToPreparedSelectionMock.mockReturnValue(() => undefined);
+    connectGoogleIntegrationMock.mockResolvedValue(connectedGoogleStatus);
+    updateDashboardAutomationSettingsMock.mockResolvedValue({
+      ...automationSettings,
+      meetingReminderOffsetsMinutes: [60, 15]
+    });
+    dismissDashboardSuggestionMock.mockResolvedValue({
+      ...dashboardOverview.gmailSuggestions[0]!,
+      status: 'dismissed'
+    });
+
+    const { default: App } = await import('../../entrypoints/sidepanel/App');
+    render(<App />);
+
+    expect(
+      screen.getByRole('button', { name: 'Assistant' })
+    ).toBeDefined();
+    expect(
+      screen.getByRole('button', { name: 'Workflow' })
+    ).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Overview' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Connections' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Workflow' }));
+    await screen.findByText('Meeting reminders');
+    await screen.findByText('Agenda for weekly product sync');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss suggestion' }));
+    await waitFor(() => {
+      expect(dismissDashboardSuggestionMock).toHaveBeenCalledWith(
+        'suggestion_1'
+      );
+    });
+
+    const offsetsInput = screen.getByLabelText('Reminder offsets (minutes)');
+    fireEvent.change(offsetsInput, {
+      target: {
+        value: '60, 15'
+      }
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save workflow settings' }));
+    await waitFor(() => {
+      expect(updateDashboardAutomationSettingsMock).toHaveBeenCalledWith({
+        meetingReminderOffsetsMinutes: [60, 15]
+      });
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open settings' }));
+    await screen.findByRole('dialog', { name: 'Settings' });
+    await screen.findByText('Google Calendar');
+    fireEvent.click(screen.getByRole('button', { name: 'Reconnect Google' }));
+    await waitFor(() => {
+      expect(connectGoogleIntegrationMock).toHaveBeenCalledTimes(1);
+    });
   });
 });

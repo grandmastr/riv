@@ -35,11 +35,20 @@ export function handleSidePanelShortcutKeydown(
     return;
   }
 
-  if (!event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) {
-    return;
-  }
+  const key = event.key.toLowerCase();
+  const isLegacyMacShortcut =
+    event.metaKey &&
+    !event.ctrlKey &&
+    !event.altKey &&
+    !event.shiftKey &&
+    key === 'j';
+  const isPrimaryShortcut =
+    (event.metaKey || event.ctrlKey) &&
+    !event.altKey &&
+    event.shiftKey &&
+    key === 'y';
 
-  if (event.key.toLowerCase() !== 'j') {
+  if (!isLegacyMacShortcut && !isPrimaryShortcut) {
     return;
   }
 

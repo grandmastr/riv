@@ -72,4 +72,46 @@ describe('handleSidePanelShortcutKeydown', () => {
     expect(preventDefault).toHaveBeenCalledTimes(1);
     expect(toggle).toHaveBeenCalledTimes(1);
   });
+
+  it('toggles the side panel on command+shift+y', () => {
+    const toggle = vi.fn();
+    const preventDefault = vi.fn();
+    const event = new KeyboardEvent('keydown', {
+      key: 'y',
+      metaKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true
+    });
+
+    Object.defineProperty(event, 'preventDefault', {
+      value: preventDefault
+    });
+
+    handleSidePanelShortcutKeydown(event, toggle);
+
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(toggle).toHaveBeenCalledTimes(1);
+  });
+
+  it('toggles the side panel on ctrl+shift+y', () => {
+    const toggle = vi.fn();
+    const preventDefault = vi.fn();
+    const event = new KeyboardEvent('keydown', {
+      key: 'y',
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true
+    });
+
+    Object.defineProperty(event, 'preventDefault', {
+      value: preventDefault
+    });
+
+    handleSidePanelShortcutKeydown(event, toggle);
+
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(toggle).toHaveBeenCalledTimes(1);
+  });
 });

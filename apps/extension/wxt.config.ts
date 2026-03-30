@@ -18,7 +18,7 @@ export default defineConfig({
       'toggle-riv-sidepanel': {
         suggested_key: {
           default: 'Ctrl+Shift+Y',
-          mac: 'Command+J'
+          mac: 'Command+Shift+Y'
         },
         description: 'Open or close the Riva side panel'
       }
