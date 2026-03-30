@@ -78,6 +78,69 @@ describe('extractPageContextSnapshot', () => {
       }
     ]);
   });
+
+  it('adds YouTube media context on watch pages without replacing generic content extraction', () => {
+    document.head.innerHTML = `
+      <meta property="og:title" content="How Riv reads YouTube pages" />
+      <meta name="description" content="A walkthrough of the extraction pipeline." />
+    `;
+    document.body.innerHTML = `
+      <main>
+        <article>
+          <h1>How Riv reads YouTube pages</h1>
+          <p>Parse metadata first, then bounded transcript evidence.</p>
+        </article>
+      </main>
+      <div id="owner">
+        <a href="/@rivdev">Riv Dev</a>
+      </div>
+      <div id="chapters">
+        <a href="/watch?v=abc123&t=32s">
+          <span class="chapter-title">Opening thesis</span>
+          <span class="chapter-time">0:32</span>
+        </a>
+      </div>
+      <ytd-engagement-panel-section-list-renderer target-id="engagement-panel-searchable-transcript">
+        <ytd-transcript-segment-renderer>
+          <div id="timestamp">0:32</div>
+          <div id="segment-text">The speaker introduces the main claim.</div>
+        </ytd-transcript-segment-renderer>
+      </ytd-engagement-panel-section-list-renderer>
+    `;
+
+    const snapshot = extractPageContextSnapshot({
+      tabId: 11,
+      url: 'https://www.youtube.com/watch?v=abc123',
+      title: 'How Riv reads YouTube pages',
+      document,
+      capturedAt: '2026-03-30T09:00:00.000Z'
+    });
+
+    expect(PageContextSnapshotSchema.parse(snapshot)).toMatchObject({
+      tabId: 11,
+      pageType: 'article',
+      media: {
+        kind: 'youtube-video',
+        videoId: 'abc123',
+        channelName: 'Riv Dev',
+        transcriptStatus: 'available'
+      }
+    });
+
+    expect(snapshot.contentBlocks).toEqual([
+      {
+        id: 'heading-1',
+        kind: 'heading',
+        text: 'How Riv reads YouTube pages',
+        level: 1
+      },
+      {
+        id: 'paragraph-1',
+        kind: 'paragraph',
+        text: 'Parse metadata first, then bounded transcript evidence.'
+      }
+    ]);
+  });
 });
 
 describe('extractSelectedTextContext', () => {
