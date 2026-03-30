@@ -2,6 +2,7 @@ import {
   MessageEnvelopeSchema,
   type ActionProposal,
   type ContextAttachment,
+  type ConversationMessage,
   type ConversationThread,
   type MessageEnvelope
 } from '@riv/contracts';
@@ -134,6 +135,45 @@ export async function* sendMessage(
       await readErrorMessage(
         response,
         `Riv could not send the message (${response.status}).`
+      )
+    );
+  }
+
+  if (!response.body) {
+    for (const envelope of parseSsePayload(await response.text())) {
+      yield envelope;
+    }
+
+    return;
+  }
+
+  for await (const envelope of parseSseStream(response.body)) {
+    yield envelope;
+  }
+}
+
+export async function* sendStatelessTurn(input: {
+  thread: ConversationThread;
+  messages: ConversationMessage[];
+  content: string;
+  attachments: ContextAttachment[];
+}) {
+  const response = await fetch(`${getApiBaseUrl()}/turns/stateless`, {
+    method: 'POST',
+    headers: createHeaders(),
+    body: JSON.stringify({
+      thread: input.thread,
+      messages: input.messages,
+      content: input.content,
+      attachments: input.attachments
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      await readErrorMessage(
+        response,
+        `Riv could not process the turn (${response.status}).`
       )
     );
   }

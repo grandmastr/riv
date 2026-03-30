@@ -37,9 +37,7 @@ const pageSnapshot: PageContextSnapshot = {
   contentBlocks: []
 };
 
-const createThreadMock = vi.fn();
-const resolveProposalMock = vi.fn();
-const sendMessageMock = vi.fn();
+const sendStatelessTurnMock = vi.fn();
 const sendBackgroundMessageMock = vi.fn();
 const subscribeToPreparedSelectionMock = vi.fn();
 const localConversationStoreMocks = vi.hoisted(() => ({
@@ -47,9 +45,7 @@ const localConversationStoreMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../lib/api-client', () => ({
-  createThread: createThreadMock,
-  resolveProposal: resolveProposalMock,
-  sendMessage: sendMessageMock
+  sendStatelessTurn: sendStatelessTurnMock
 }));
 
 vi.mock('../lib/messages', () => ({
@@ -82,9 +78,7 @@ describe('sidepanel App', () => {
   let conversationStore: LocalConversationStore;
 
   beforeEach(() => {
-    createThreadMock.mockReset();
-    resolveProposalMock.mockReset();
-    sendMessageMock.mockReset();
+    sendStatelessTurnMock.mockReset();
     sendBackgroundMessageMock.mockReset();
     subscribeToPreparedSelectionMock.mockReset();
     localConversationStoreMocks.getConversationStore.mockReset();
@@ -92,6 +86,7 @@ describe('sidepanel App', () => {
     localConversationStoreMocks.getConversationStore.mockReturnValue(
       conversationStore
     );
+    vi.spyOn(globalThis.crypto, 'randomUUID').mockReturnValue('local-thread-1');
   });
 
   afterEach(() => {
@@ -127,8 +122,8 @@ describe('sidepanel App', () => {
     );
     subscribeToPreparedSelectionMock.mockReturnValue(() => undefined);
 
-    createThreadMock.mockResolvedValue(thread);
-    sendMessageMock.mockReturnValue(
+    await conversationStore.upsertThread(thread);
+    sendStatelessTurnMock.mockReturnValue(
       (async function* () {
         yield createEnvelope({
           type: 'message_delta',
@@ -202,8 +197,8 @@ describe('sidepanel App', () => {
       }
     );
     subscribeToPreparedSelectionMock.mockReturnValue(() => undefined);
-    createThreadMock.mockResolvedValue(thread);
-    sendMessageMock.mockReturnValue(
+    await conversationStore.upsertThread(thread);
+    sendStatelessTurnMock.mockReturnValue(
       (async function* () {
         await firstDeltaGate;
 
@@ -276,8 +271,8 @@ describe('sidepanel App', () => {
         return () => undefined;
       }
     );
-    createThreadMock.mockResolvedValue(thread);
-    sendMessageMock.mockReturnValue(
+    await conversationStore.upsertThread(thread);
+    sendStatelessTurnMock.mockReturnValue(
       (async function* () {
         yield createEnvelope({
           type: 'message_delta',
@@ -311,13 +306,18 @@ describe('sidepanel App', () => {
     );
 
     await waitFor(() => {
-      expect(sendMessageMock).toHaveBeenCalledTimes(1);
+      expect(sendStatelessTurnMock).toHaveBeenCalledTimes(1);
     });
 
-    expect(sendMessageMock).toHaveBeenCalledWith(
-      'thread_1',
-      'Answer using the prepared selection',
-      expect.arrayContaining([
+    expect(sendStatelessTurnMock).toHaveBeenCalledWith({
+      thread: expect.objectContaining({
+        id: thread.id,
+        title: thread.title,
+        userId: thread.userId
+      }),
+      messages: [],
+      content: 'Answer using the prepared selection',
+      attachments: expect.arrayContaining([
         expect.objectContaining({
           kind: 'page'
         }),
@@ -326,7 +326,7 @@ describe('sidepanel App', () => {
           selection: preparedSelection
         }
       ])
-    );
+    });
   });
 
   it('re-reads the active page before sending so navigation does not reuse stale page context', async () => {
@@ -363,8 +363,8 @@ describe('sidepanel App', () => {
       }
     );
     subscribeToPreparedSelectionMock.mockReturnValue(() => undefined);
-    createThreadMock.mockResolvedValue(thread);
-    sendMessageMock.mockReturnValue(
+    await conversationStore.upsertThread(thread);
+    sendStatelessTurnMock.mockReturnValue(
       (async function* () {
         yield createEnvelope({
           type: 'message_delta',
@@ -389,20 +389,25 @@ describe('sidepanel App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
 
     await waitFor(() => {
-      expect(sendMessageMock).toHaveBeenCalledTimes(1);
+      expect(sendStatelessTurnMock).toHaveBeenCalledTimes(1);
     });
 
     expect(activePageReads).toBe(2);
-    expect(sendMessageMock).toHaveBeenCalledWith(
-      'thread_1',
-      'What changed on this page?',
-      expect.arrayContaining([
+    expect(sendStatelessTurnMock).toHaveBeenCalledWith({
+      thread: expect.objectContaining({
+        id: thread.id,
+        title: thread.title,
+        userId: thread.userId
+      }),
+      messages: [],
+      content: 'What changed on this page?',
+      attachments: expect.arrayContaining([
         {
           kind: 'page',
           snapshot: navigatedSnapshot
         }
       ])
-    );
+    });
   });
 
   it('re-reads the current selection before sending so stale prepared text is not reused', async () => {
@@ -447,8 +452,8 @@ describe('sidepanel App', () => {
         return () => undefined;
       }
     );
-    createThreadMock.mockResolvedValue(thread);
-    sendMessageMock.mockReturnValue(
+    await conversationStore.upsertThread(thread);
+    sendStatelessTurnMock.mockReturnValue(
       (async function* () {
         yield createEnvelope({
           type: 'message_delta',
@@ -474,19 +479,24 @@ describe('sidepanel App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
 
     await waitFor(() => {
-      expect(sendMessageMock).toHaveBeenCalledTimes(1);
+      expect(sendStatelessTurnMock).toHaveBeenCalledTimes(1);
     });
 
-    expect(sendMessageMock).toHaveBeenCalledWith(
-      'thread_1',
-      'Use the current selection',
-      expect.arrayContaining([
+    expect(sendStatelessTurnMock).toHaveBeenCalledWith({
+      thread: expect.objectContaining({
+        id: thread.id,
+        title: thread.title,
+        userId: thread.userId
+      }),
+      messages: [],
+      content: 'Use the current selection',
+      attachments: expect.arrayContaining([
         {
           kind: 'selection',
           selection: freshSelection
         }
       ])
-    );
+    });
   });
 
   it('hydrates the most recently updated local thread with its messages and proposals on startup', async () => {
@@ -565,7 +575,7 @@ describe('sidepanel App', () => {
 
     await screen.findByText('Recovered locally persisted answer.');
     expect(screen.getByText('Focus the API reference tab')).toBeDefined();
-    expect(createThreadMock).not.toHaveBeenCalled();
+    expect(sendStatelessTurnMock).not.toHaveBeenCalled();
   });
 
   it('persists created threads and strips transient page and selection attachments from local messages', async () => {
@@ -598,8 +608,7 @@ describe('sidepanel App', () => {
       }
     );
     subscribeToPreparedSelectionMock.mockReturnValue(() => undefined);
-    createThreadMock.mockResolvedValue(thread);
-    sendMessageMock.mockReturnValue(
+    sendStatelessTurnMock.mockReturnValue(
       (async function* () {
         yield createEnvelope({
           type: 'message_delta',
@@ -627,7 +636,7 @@ describe('sidepanel App', () => {
 
     const detail = await conversationStore.getLatestThreadDetail();
 
-    expect(detail?.thread.id).toBe('thread_1');
+    expect(detail?.thread.id).toBe('thread_local-thread-1');
     expect(detail?.messages).toHaveLength(2);
     expect(detail?.messages[0]?.content).toBe('Persist this exchange');
     expect(detail?.messages[0]?.attachments).toEqual([]);
@@ -695,13 +704,8 @@ describe('sidepanel App', () => {
       }
     );
     subscribeToPreparedSelectionMock.mockReturnValue(() => undefined);
-    createThreadMock.mockResolvedValue(thread);
-    resolveProposalMock.mockResolvedValue({
-      result: {
-        proposalId: proposal.id
-      }
-    });
-    sendMessageMock.mockReturnValue(
+    await conversationStore.upsertThread(thread);
+    sendStatelessTurnMock.mockReturnValue(
       (async function* () {
         yield createEnvelope({
           type: 'proposal_created',

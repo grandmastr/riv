@@ -12,9 +12,7 @@ import type {
 } from '@riv/contracts';
 
 import {
-  createThread,
-  resolveProposal,
-  sendMessage
+  sendStatelessTurn
 } from '../../src/lib/api-client';
 import { getConversationStore } from '../../src/lib/local-conversation-store';
 import {
@@ -50,6 +48,18 @@ function createActionResultAttachment(
   return {
     kind: 'actionResult',
     result
+  };
+}
+
+function createLocalThread(title: string): ConversationThread {
+  const timestamp = new Date().toISOString();
+
+  return {
+    id: `thread_${crypto.randomUUID()}`,
+    userId: VIEWER_ID,
+    title,
+    createdAt: timestamp,
+    updatedAt: timestamp
   };
 }
 
@@ -122,7 +132,7 @@ export default function App() {
       return thread;
     }
 
-    const created = await createThread(pageContext?.title || 'Riv session');
+    const created = createLocalThread(pageContext?.title || 'Riv session');
     await conversationStore.upsertThread(created);
     setThread(created);
     return created;
@@ -180,6 +190,8 @@ export default function App() {
 
     try {
       let activeThread = await ensureThread();
+      const localDetail = await conversationStore.getThreadDetail(activeThread.id);
+      const priorMessages = localDetail?.messages ?? messages;
       const attachments = await collectAttachments();
       const userMessage = createLocalMessage({
         id: `local-user-${Date.now()}`,
@@ -200,11 +212,12 @@ export default function App() {
       const assistantCreatedAt = new Date().toISOString();
       let assistantContent = '';
 
-      for await (const envelope of sendMessage(
-        activeThread.id,
+      for await (const envelope of sendStatelessTurn({
+        thread: activeThread,
+        messages: priorMessages,
         content,
         attachments
-      )) {
+      })) {
         switch (envelope.payload.type) {
           case 'message_delta': {
             const { delta } = envelope.payload;
@@ -280,7 +293,6 @@ export default function App() {
         attachments: [createActionResultAttachment(result)]
       });
 
-      await resolveProposal(activeThread.id, proposal, decision);
       setMessages((current) => [...current, actionMessage]);
       setProposals((current) =>
         current.filter((item) => item.id !== proposalId)
