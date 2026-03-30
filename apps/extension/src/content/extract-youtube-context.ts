@@ -601,7 +601,9 @@ export async function extractYouTubeMediaContextWithTranscript(
 
       if (closeButton) {
         clickElement(closeButton);
-      } else {
+      }
+
+      if (isTranscriptPanelOpen(document)) {
         const transcriptButton = getTranscriptOpenButton(document);
 
         if (transcriptButton) {

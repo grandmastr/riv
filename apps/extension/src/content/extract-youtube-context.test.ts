@@ -52,7 +52,9 @@ function createClosedTranscriptFixture(options?: {
   renderDelayMs?: number;
   transcriptMarkup?: string;
   disabled?: boolean;
+  closeButtonClosesPanel?: boolean;
 }) {
+  const closeButtonClosesPanel = options?.closeButtonClosesPanel ?? true;
   const renderDelayMs = options?.renderDelayMs ?? 50;
   const transcriptMarkup =
     options?.transcriptMarkup ??
@@ -93,7 +95,9 @@ function createClosedTranscriptFixture(options?: {
       .querySelector<HTMLButtonElement>('button[aria-label*="Close transcript" i]')
       ?.addEventListener('click', () => {
         closeTranscriptPanel();
-        host.innerHTML = '';
+        if (closeButtonClosesPanel) {
+          host.innerHTML = '';
+        }
       });
 
     window.setTimeout(() => {
@@ -552,6 +556,44 @@ describe('extractYouTubeMediaContextWithTranscript', () => {
       transcriptStatus: 'failed',
       transcriptFailureReason: 'panel-open-failed'
     });
+  });
+
+  it('retries cleanup via the transcript toggle when the close button click does not close the panel', async () => {
+    vi.useFakeTimers();
+
+    const { host, openTranscriptPanel, closeTranscriptPanel, openButton } =
+      createClosedTranscriptFixture({
+        closeButtonClosesPanel: false
+      });
+    const toggleFallback = vi.fn();
+
+    openButton?.addEventListener('click', () => {
+      if (closeTranscriptPanel.mock.calls.length === 0) {
+        return;
+      }
+
+      toggleFallback();
+      host!.innerHTML = '';
+    });
+
+    const resultPromise = extractYouTubeMediaContextWithTranscript(
+      document,
+      'https://www.youtube.com/watch?v=retryclose123',
+      {
+        timeoutMs: 250,
+        pollIntervalMs: 25
+      }
+    );
+
+    await vi.advanceTimersByTimeAsync(75);
+
+    const result = await resultPromise;
+
+    expect(result?.transcriptStatus).toBe('available');
+    expect(openTranscriptPanel).toHaveBeenCalledTimes(2);
+    expect(closeTranscriptPanel).toHaveBeenCalledTimes(1);
+    expect(toggleFallback).toHaveBeenCalledTimes(1);
+    expect(host?.innerHTML).toBe('');
   });
 });
 
