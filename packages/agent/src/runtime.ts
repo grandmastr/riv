@@ -2,6 +2,7 @@ import {
   PROTOCOL_VERSION,
   type ActionConfirmation,
   type ActionExecutionResult,
+  type ContextAttachment,
   type ConversationMessage,
   type ConversationThread,
   type MessageEnvelope
@@ -26,6 +27,7 @@ import type {
   ProposalResolution,
   ResolveProposalInput,
   RunAssistantTurnInput,
+  RunStatelessAssistantTurnInput,
   StoredActionProposal,
   ThreadDetail,
   ViewerScopedInput
@@ -87,6 +89,39 @@ function collectAffectedTabs(proposal: StoredActionProposal) {
     .map((tabId) => ({
       tabId
     }));
+}
+
+function createUserMessage(input: {
+  id: string;
+  threadId: string;
+  content: string;
+  createdAt: string;
+}): ConversationMessage {
+  return {
+    id: input.id,
+    threadId: input.threadId,
+    role: 'user',
+    content: input.content,
+    attachments: [],
+    toolInvocations: [],
+    createdAt: input.createdAt
+  };
+}
+
+function assertMessagesBelongToThread(
+  messages: ConversationMessage[],
+  threadId: string
+) {
+  const mismatchedMessage = messages.find(
+    (message) => message.threadId !== threadId
+  );
+
+  if (mismatchedMessage) {
+    throw new AgentRuntimeError(
+      'Stateless turn messages must belong to the supplied thread.',
+      400
+    );
+  }
 }
 
 async function assertOwnedThread(
@@ -174,66 +209,24 @@ export class AgentRuntime {
       input.userId
     );
     const timestamp = this.now();
-    const userMessage: ConversationMessage = {
+    const userMessage = createUserMessage({
       id: this.idGenerator('message_user'),
       threadId: thread.id,
-      role: 'user',
       content: input.content,
-      attachments: [],
-      toolInvocations: [],
       createdAt: timestamp
-    };
+    });
 
     await this.messages.append(userMessage);
 
     const priorMessages = await this.messages.listByThreadId(thread.id);
-    const memories = await this.memories.listByUserId(input.userId);
-    let assistantResponse = '';
-
-    for await (const event of this.modelGateway.streamTurn({
+    const assistantResponse = yield* this.streamTurnWithContext({
+      userId: input.userId,
       thread,
       messages: priorMessages,
       userMessage,
-      transientAttachments: input.attachments,
-      memories
-    })) {
-      if (event.type === 'message_delta') {
-        assistantResponse += event.delta;
-
-        yield createEnvelope(
-          {
-            type: 'message_delta',
-            delta: event.delta
-          },
-          this.now()
-        );
-        continue;
-      }
-
-      const proposalTimestamp = this.now();
-      const proposal: StoredActionProposal = {
-        id: this.idGenerator('proposal'),
-        threadId: thread.id,
-        kind: event.proposal.kind,
-        reason: event.proposal.reason,
-        preview: event.proposal.preview,
-        riskLevel: event.proposal.riskLevel,
-        requiresConfirmation: true,
-        payload: event.proposal.payload,
-        createdAt: proposalTimestamp,
-        status: 'pending'
-      };
-
-      await this.proposals.create(proposal);
-
-      yield createEnvelope(
-        {
-          type: 'proposal_created',
-          proposal
-        },
-        proposalTimestamp
-      );
-    }
+      attachments: input.attachments,
+      persistProposals: true
+    });
 
     if (assistantResponse.trim()) {
       const assistantMessage: ConversationMessage = {
@@ -248,6 +241,33 @@ export class AgentRuntime {
 
       await this.messages.append(assistantMessage);
     }
+  }
+
+  async *runStatelessAssistantTurn(
+    input: RunStatelessAssistantTurnInput
+  ): AsyncGenerator<MessageEnvelope> {
+    const thread: ConversationThread = {
+      ...input.thread,
+      userId: input.userId
+    };
+
+    assertMessagesBelongToThread(input.messages, thread.id);
+
+    const userMessage = createUserMessage({
+      id: this.idGenerator('message_user'),
+      threadId: thread.id,
+      content: input.content,
+      createdAt: this.now()
+    });
+
+    yield* this.streamTurnWithContext({
+      userId: input.userId,
+      thread,
+      messages: [...input.messages, userMessage],
+      userMessage,
+      attachments: input.attachments,
+      persistProposals: false
+    });
   }
 
   async confirmActionProposal(
@@ -367,6 +387,67 @@ export class AgentRuntime {
 
     await this.memories.create(memory);
     return memory;
+  }
+
+  private async *streamTurnWithContext(input: {
+    userId: string;
+    thread: ConversationThread;
+    messages: ConversationMessage[];
+    userMessage: ConversationMessage;
+    attachments: ContextAttachment[];
+    persistProposals: boolean;
+  }): AsyncGenerator<MessageEnvelope, string> {
+    const memories = await this.memories.listByUserId(input.userId);
+    let assistantResponse = '';
+
+    for await (const event of this.modelGateway.streamTurn({
+      thread: input.thread,
+      messages: input.messages,
+      userMessage: input.userMessage,
+      transientAttachments: input.attachments,
+      memories
+    })) {
+      if (event.type === 'message_delta') {
+        assistantResponse += event.delta;
+
+        yield createEnvelope(
+          {
+            type: 'message_delta',
+            delta: event.delta
+          },
+          this.now()
+        );
+        continue;
+      }
+
+      const proposalTimestamp = this.now();
+      const proposal: StoredActionProposal = {
+        id: this.idGenerator('proposal'),
+        threadId: input.thread.id,
+        kind: event.proposal.kind,
+        reason: event.proposal.reason,
+        preview: event.proposal.preview,
+        riskLevel: event.proposal.riskLevel,
+        requiresConfirmation: true,
+        payload: event.proposal.payload,
+        createdAt: proposalTimestamp,
+        status: 'pending'
+      };
+
+      if (input.persistProposals) {
+        await this.proposals.create(proposal);
+      }
+
+      yield createEnvelope(
+        {
+          type: 'proposal_created',
+          proposal
+        },
+        proposalTimestamp
+      );
+    }
+
+    return assistantResponse;
   }
 }
 

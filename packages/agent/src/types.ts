@@ -44,6 +44,13 @@ export type RunAssistantTurnInput = ViewerScopedInput & {
   attachments: ContextAttachment[];
 };
 
+export type RunStatelessAssistantTurnInput = ViewerScopedInput & {
+  thread: ConversationThread;
+  messages: ConversationMessage[];
+  content: string;
+  attachments: ContextAttachment[];
+};
+
 export type CreateMemoryInput = ViewerScopedInput & {
   title: string;
   content: string;

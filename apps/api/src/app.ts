@@ -1,6 +1,12 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { PROTOCOL_VERSION, type MessageEnvelope } from '@riv/contracts';
+import {
+  ContextAttachmentSchema,
+  ConversationMessageSchema,
+  ConversationThreadSchema,
+  PROTOCOL_VERSION,
+  type MessageEnvelope
+} from '@riv/contracts';
 import type { AgentRuntime } from '@riv/agent';
 
 import { AgentRuntimeError } from '@riv/agent';
@@ -12,7 +18,14 @@ const CreateThreadBodySchema = z.object({
 
 const CreateMessageBodySchema = z.object({
   content: z.string().min(1),
-  attachments: z.array(z.any()).default([])
+  attachments: z.array(ContextAttachmentSchema).default([])
+});
+
+const CreateStatelessTurnBodySchema = z.object({
+  thread: ConversationThreadSchema,
+  messages: z.array(ConversationMessageSchema).default([]),
+  content: z.string().min(1),
+  attachments: z.array(ContextAttachmentSchema).default([])
 });
 
 const CreateMemoryBodySchema = z.object({
@@ -137,6 +150,26 @@ export function createApp(options: {
         options.runtime.runAssistantTurn({
           threadId: context.req.param('threadId'),
           userId: viewer.id,
+          content: body.content,
+          attachments: body.attachments
+        })
+      );
+    } catch (error) {
+      return createJsonError(error);
+    }
+  });
+
+  app.post('/turns/stateless', async (context) => {
+    try {
+      const viewer = await authService.resolveViewer(context);
+      const body = CreateStatelessTurnBodySchema.parse(
+        await context.req.json()
+      );
+      return sseResponse(
+        options.runtime.runStatelessAssistantTurn({
+          userId: viewer.id,
+          thread: body.thread,
+          messages: body.messages,
           content: body.content,
           attachments: body.attachments
         })

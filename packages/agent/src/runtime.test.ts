@@ -268,6 +268,152 @@ describe('agent runtime', () => {
     expect(await runtime.listMemories({ userId: 'user_dev' })).toEqual([]);
   });
 
+  it('runs a stateless turn from extension-supplied context without persisting thread state', async () => {
+    let capturedInput: ModelGatewayTurnInput | undefined;
+
+    const threadRepository = {
+      create: vi.fn(),
+      findById: vi.fn()
+    };
+    const messageRepository = {
+      append: vi.fn(),
+      listByThreadId: vi.fn()
+    };
+    const proposalRepository = {
+      create: vi.fn(),
+      findById: vi.fn(),
+      listByThreadId: vi.fn(),
+      update: vi.fn()
+    };
+    const memoryRepository = {
+      create: vi.fn(),
+      listByUserId: vi.fn(async () => [
+        {
+          id: 'memory_existing',
+          userId: 'user_dev',
+          title: 'Working style',
+          content: 'Keep backend changes minimal.',
+          createdAt: NOW,
+          updatedAt: NOW
+        }
+      ])
+    };
+
+    const runtime = createAgentRuntime({
+      now: () => NOW,
+      idGenerator: createSequenceIdGenerator([
+        'message_user_stateless',
+        'proposal_stateless'
+      ]),
+      modelGateway: new MockModelGateway((input) => {
+        capturedInput = input;
+
+        return {
+          assistantMessage: 'I can answer from the provided local context.',
+          proposals: [
+            {
+              kind: 'groupTabs',
+              reason: 'The provided tabs all relate to the same task.',
+              preview: {
+                title: 'Group local Riv tabs',
+                summary: 'Create one group for the current Riv work.',
+                items: ['https://example.com/docs/riv']
+              },
+              riskLevel: 'low',
+              payload: {
+                tabIds: [12],
+                title: 'Local Riv work'
+              }
+            }
+          ]
+        };
+      }),
+      repositories: {
+        threads: threadRepository,
+        messages: messageRepository,
+        proposals: proposalRepository,
+        memories: memoryRepository
+      }
+    });
+
+    const localThread = {
+      id: 'thread_local_1',
+      userId: 'user_dev',
+      title: 'Local Riv thread',
+      createdAt: NOW,
+      updatedAt: NOW
+    } as const;
+    const priorMessages = [
+      {
+        id: 'message_user_previous',
+        threadId: 'thread_local_1',
+        role: 'user',
+        content: 'Earlier local question.',
+        attachments: [],
+        toolInvocations: [],
+        createdAt: NOW
+      },
+      {
+        id: 'message_assistant_previous',
+        threadId: 'thread_local_1',
+        role: 'assistant',
+        content: 'Earlier local answer.',
+        attachments: [],
+        toolInvocations: [],
+        createdAt: NOW
+      }
+    ] as const;
+
+    const envelopes = [];
+    for await (const envelope of runtime.runStatelessAssistantTurn({
+      userId: 'user_dev',
+      thread: localThread,
+      messages: [...priorMessages],
+      content: 'Answer from this local history.',
+      attachments: [pageAttachment]
+    })) {
+      envelopes.push(MessageEnvelopeSchema.parse(envelope));
+    }
+
+    expect(envelopes.map((envelope) => envelope.payload.type)).toEqual([
+      'message_delta',
+      'proposal_created'
+    ]);
+    expect(
+      envelopes[1]?.payload.type === 'proposal_created'
+        ? envelopes[1].payload.proposal
+        : null
+    ).toEqual(
+      expect.objectContaining({
+        id: 'proposal_stateless',
+        threadId: 'thread_local_1'
+      })
+    );
+
+    expect(capturedInput?.thread).toEqual(localThread);
+    expect(capturedInput?.messages).toEqual([
+      ...priorMessages,
+      expect.objectContaining({
+        id: 'message_user_stateless',
+        threadId: 'thread_local_1',
+        role: 'user',
+        content: 'Answer from this local history.',
+        attachments: []
+      })
+    ]);
+    expect(capturedInput?.memories).toEqual([
+      expect.objectContaining({
+        id: 'memory_existing',
+        userId: 'user_dev'
+      })
+    ]);
+
+    expect(threadRepository.findById).not.toHaveBeenCalled();
+    expect(messageRepository.append).not.toHaveBeenCalled();
+    expect(proposalRepository.create).not.toHaveBeenCalled();
+    expect(memoryRepository.listByUserId).toHaveBeenCalledWith('user_dev');
+  });
+
   it('passes YouTube media context to the model and stores transcript-grounded answers with timestamps', async () => {
     let capturedInput: ModelGatewayTurnInput | undefined;
 

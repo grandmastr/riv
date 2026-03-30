@@ -260,6 +260,118 @@ describe('api app', () => {
     expect(detail.actionProposals[0]?.status).toBe('pending');
   });
 
+  it('streams a stateless turn from extension-supplied context without requiring a server thread', async () => {
+    const runStatelessAssistantTurn = async function* (input: {
+      userId: string;
+      thread: { id: string; title: string };
+      messages: Array<{ id: string; threadId: string; content: string }>;
+      content: string;
+      attachments: ContextAttachment[];
+    }) {
+      expect(input).toMatchObject({
+        userId: 'user_dev',
+        thread: {
+          id: 'thread_local_1',
+          title: 'Local Riv thread'
+        },
+        messages: [
+          {
+            id: 'message_user_previous',
+            threadId: 'thread_local_1',
+            content: 'Earlier local question.'
+          }
+        ],
+        content: 'Use my local history only.',
+        attachments: [pageAttachment]
+      });
+
+      yield {
+        version: '2026-03-29',
+        type: 'assistant_stream',
+        emittedAt: NOW,
+        payload: {
+          type: 'message_delta',
+          delta: 'Using the provided local context.'
+        }
+      };
+
+      yield {
+        version: '2026-03-29',
+        type: 'assistant_stream',
+        emittedAt: NOW,
+        payload: {
+          type: 'proposal_created',
+          proposal: {
+            id: 'proposal_local_1',
+            threadId: 'thread_local_1',
+            kind: 'groupTabs',
+            reason: 'The provided local tabs belong together.',
+            preview: {
+              title: 'Group local tabs',
+              summary: 'Create one group for the local Riv work.',
+              items: []
+            },
+            riskLevel: 'low',
+            requiresConfirmation: true,
+            payload: {
+              tabIds: [4]
+            },
+            createdAt: NOW
+          }
+        }
+      };
+    };
+
+    const { app } = createApp({
+      runtime: {
+        runStatelessAssistantTurn
+      } as never
+    });
+
+    const response = await app.request('/turns/stateless', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        thread: {
+          id: 'thread_local_1',
+          userId: 'user_dev',
+          title: 'Local Riv thread',
+          createdAt: NOW,
+          updatedAt: NOW
+        },
+        messages: [
+          {
+            id: 'message_user_previous',
+            threadId: 'thread_local_1',
+            role: 'user',
+            content: 'Earlier local question.',
+            attachments: [],
+            toolInvocations: [],
+            createdAt: NOW
+          }
+        ],
+        content: 'Use my local history only.',
+        attachments: [pageAttachment]
+      })
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('text/event-stream');
+
+    const envelopes = await readStream(response);
+    expect(envelopes.map((envelope) => envelope.payload.type)).toEqual([
+      'message_delta',
+      'proposal_created'
+    ]);
+    expect(
+      envelopes[1]?.payload.type === 'proposal_created'
+        ? envelopes[1].payload.proposal.id
+        : null
+    ).toBe('proposal_local_1');
+  });
+
   it('confirms and rejects action proposals', async () => {
     const { app } = await createTestApp();
     const threadId = await createThread(app);
