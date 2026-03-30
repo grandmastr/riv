@@ -14,6 +14,19 @@ type ExtractYouTubeMediaContextWithTranscriptOptions = {
   pollIntervalMs?: number;
 };
 
+type TranscriptWaitResult =
+  | {
+      status: 'ready';
+      rows: HTMLElement[];
+    }
+  | {
+      status: 'timeout';
+      sawRows: boolean;
+    }
+  | {
+      status: 'video-changed';
+    };
+
 function parseUrl(url: string) {
   try {
     return new URL(url);
@@ -362,23 +375,80 @@ function wait(durationMs: number) {
   });
 }
 
+function getCurrentYouTubeVideoIds(document: Document) {
+  const urls = [
+    document.location?.href,
+    document.querySelector('link[rel="canonical"]')?.getAttribute('href'),
+    document
+      .querySelector('meta[property="og:url"]')
+      ?.getAttribute('content')
+  ];
+  const videoIds = new Set<string>();
+
+  for (const candidateUrl of urls) {
+    const videoId = candidateUrl ? extractYouTubeVideoId(candidateUrl) : null;
+
+    if (videoId) {
+      videoIds.add(videoId);
+    }
+  }
+
+  return videoIds;
+}
+
+function hasYouTubeVideoChanged(document: Document, expectedVideoId: string) {
+  const currentVideoIds = getCurrentYouTubeVideoIds(document);
+
+  return currentVideoIds.size > 0 && !currentVideoIds.has(expectedVideoId);
+}
+
 async function waitForTranscriptRows(
   document: Document,
-  options: Required<ExtractYouTubeMediaContextWithTranscriptOptions>
-) {
+  options: Required<ExtractYouTubeMediaContextWithTranscriptOptions>,
+  expectedVideoId: string
+): Promise<TranscriptWaitResult> {
   const startedAt = Date.now();
+  let sawRows = false;
 
   while (Date.now() - startedAt <= options.timeoutMs) {
+    if (hasYouTubeVideoChanged(document, expectedVideoId)) {
+      return {
+        status: 'video-changed'
+      };
+    }
+
     const rows = getTranscriptRows(document);
 
-    if (rows.length > 0 && normalizeTranscriptCues(rows).length > 0) {
-      return rows;
+    if (rows.length > 0) {
+      sawRows = true;
+
+      if (normalizeTranscriptCues(rows).length > 0) {
+        if (hasYouTubeVideoChanged(document, expectedVideoId)) {
+          return {
+            status: 'video-changed'
+          };
+        }
+
+        return {
+          status: 'ready',
+          rows
+        };
+      }
     }
 
     await wait(options.pollIntervalMs);
   }
 
-  return [];
+  if (hasYouTubeVideoChanged(document, expectedVideoId)) {
+    return {
+      status: 'video-changed'
+    };
+  }
+
+  return {
+    status: 'timeout',
+    sawRows
+  };
 }
 
 function buildTranscriptFailureResult(
@@ -601,13 +671,30 @@ export async function extractYouTubeMediaContextWithTranscript(
       openedByExtension = true;
     }
 
-    const transcriptRows = await waitForTranscriptRows(document, resolvedOptions);
+    const transcriptWaitResult = await waitForTranscriptRows(
+      document,
+      resolvedOptions,
+      pendingMedia.videoId
+    );
 
-    if (transcriptRows.length === 0) {
-      return buildTranscriptFailureResult(pendingMedia, 'panel-timeout');
+    if (transcriptWaitResult.status === 'video-changed') {
+      return media;
     }
 
-    const transcript = truncateTranscript(normalizeTranscriptCues(transcriptRows));
+    if (transcriptWaitResult.status === 'timeout') {
+      return buildTranscriptFailureResult(
+        pendingMedia,
+        transcriptWaitResult.sawRows ? 'parse-failed' : 'panel-timeout'
+      );
+    }
+
+    if (hasYouTubeVideoChanged(document, pendingMedia.videoId)) {
+      return media;
+    }
+
+    const transcript = truncateTranscript(
+      normalizeTranscriptCues(transcriptWaitResult.rows)
+    );
 
     if (transcript.length === 0) {
       return buildTranscriptFailureResult(pendingMedia, 'parse-failed');

@@ -640,7 +640,7 @@ describe('extractYouTubeMediaContextWithTranscript', () => {
     expect(host?.innerHTML).toBe('');
   });
 
-  it('times out and restores the prior closed state when transcript rows never hydrate into cues', async () => {
+  it('returns parse-failed when transcript rows appear but never hydrate into cues', async () => {
     vi.useFakeTimers();
 
     const { host, closeTranscriptPanel } = createClosedTranscriptFixture({
@@ -670,7 +670,7 @@ describe('extractYouTubeMediaContextWithTranscript', () => {
       videoId: 'parsefail123',
       transcript: [],
       transcriptStatus: 'failed',
-      transcriptFailureReason: 'panel-timeout'
+      transcriptFailureReason: 'parse-failed'
     });
     expect(closeTranscriptPanel).toHaveBeenCalledTimes(1);
     expect(host?.innerHTML).toBe('');
@@ -782,6 +782,53 @@ describe('extractYouTubeMediaContextWithTranscript', () => {
         }
       ]
     });
+  });
+
+  it('abandons async enrichment when the active YouTube video changes during polling', async () => {
+    vi.useFakeTimers();
+
+    const { host, closeTranscriptPanel } = createClosedTranscriptFixture({
+      renderDelayMs: 75,
+      transcriptMarkup: `
+        <ytd-transcript-segment-renderer>
+          <div id="timestamp">0:11</div>
+          <div id="segment-text">Transcript from the next video should be ignored.</div>
+        </ytd-transcript-segment-renderer>
+      `
+    });
+
+    document.head.insertAdjacentHTML(
+      'beforeend',
+      '<link rel="canonical" href="https://www.youtube.com/watch?v=async123" />'
+    );
+
+    window.setTimeout(() => {
+      document
+        .querySelector<HTMLLinkElement>('link[rel="canonical"]')
+        ?.setAttribute('href', 'https://www.youtube.com/watch?v=navigated456');
+    }, 25);
+
+    const resultPromise = extractYouTubeMediaContextWithTranscript(
+      document,
+      'https://www.youtube.com/watch?v=async123',
+      {
+        timeoutMs: 250,
+        pollIntervalMs: 25
+      }
+    );
+
+    await vi.advanceTimersByTimeAsync(100);
+
+    const result = await resultPromise;
+
+    expect(YouTubeMediaContextSchema.parse(result)).toMatchObject({
+      kind: 'youtube-video',
+      videoId: 'async123',
+      transcript: [],
+      transcriptStatus: 'not-requested'
+    });
+    expect(closeTranscriptPanel).toHaveBeenCalledTimes(1);
+    expect(host?.innerHTML).toBe('');
   });
 
   it('retries cleanup via the transcript toggle when the close button click does not close the panel', async () => {
